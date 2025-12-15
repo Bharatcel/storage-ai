@@ -179,3 +179,54 @@
 .btn-secondary:hover {
   background: #e0e0e0;
 }
+
+/* New styles for exclusive options and required fields */
+.checkbox-option {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+}
+
+.checkbox-option.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.checkbox-option input[type="checkbox"]:disabled {
+  cursor: not-allowed;
+}
+
+.exclusive-badge {
+  display: inline-block;
+  background: #ffc107;
+  color: #333;
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  margin-left: 0.5rem;
+}
+
+.required {
+  color: #e53e3e;
+  font-weight: bold;
+}
+
+.hint {
+  color: #666;
+  font-size: 0.85rem;
+  font-style: italic;
+}
+
+.required-field {
+  border-color: #e53e3e !important;
+  background-color: #fff5f5;
+}
+
+.question-description {
+  margin-top: 0.5rem;
+  font-size: 0.9rem;
+  color: #666;
+  font-style: italic;
+}
