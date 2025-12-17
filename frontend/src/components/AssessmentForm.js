@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import BasicInfoForm from './BasicInfoForm';
 import QuestionsForm from './QuestionsForm';
-import { getQuestions, createCompleteAssessment } from '../services/api';
+import ResultsUpload from './ResultsUpload';
+import { getQuestions, createCompleteAssessment, getScriptList, downloadScript } from '../services/api';
 import './AssessmentForm.css';
 
 const AssessmentForm = () => {
@@ -12,9 +13,11 @@ const AssessmentForm = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(false);
+  const [availableScripts, setAvailableScripts] = useState([]);
 
   useEffect(() => {
     fetchQuestions();
+    fetchScripts();
   }, []);
 
   const fetchQuestions = async () => {
@@ -24,6 +27,16 @@ const AssessmentForm = () => {
     } catch (err) {
       setError('Failed to load questions. Please try again.');
       console.error(err);
+    }
+  };
+
+  const fetchScripts = async () => {
+    try {
+      const data = await getScriptList();
+      setAvailableScripts(data.scripts || []);
+    } catch (err) {
+      console.error('Failed to load scripts:', err);
+      // Don't set error state, scripts are optional
     }
   };
 
@@ -82,6 +95,15 @@ const AssessmentForm = () => {
     setError(null);
   };
 
+  const handleDownloadScript = async (filename) => {
+    try {
+      await downloadScript(filename);
+    } catch (err) {
+      console.error('Failed to download script:', err);
+      setError(`Failed to download ${filename}. Please try again or contact support.`);
+    }
+  };
+
   const generalQuestions = questions.general;
   const technicalQuestions = questions.technical;
 
@@ -129,6 +151,37 @@ const AssessmentForm = () => {
           <div className="success-icon">✓</div>
           <h2>Assessment Submitted Successfully!</h2>
           <p>Your assessment has been saved to the database.</p>
+          
+          {availableScripts.length > 0 && (
+            <div className="scripts-section">
+              <h3>Download Assessment Scripts</h3>
+              <p className="scripts-description">Download the required scripts for your storage assessment:</p>
+              <div className="scripts-list">
+                {availableScripts.map((script) => (
+                  <button
+                    key={script.filename}
+                    onClick={() => handleDownloadScript(script.filename)}
+                    className="btn btn-script"
+                  >
+                    📥 {script.filename}
+                    <span className="script-size">
+                      ({(script.size / 1024).toFixed(1)} KB)
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {projectData && (
+            <ResultsUpload 
+              projectId={projectData.id}
+              onUploadComplete={(result) => {
+                console.log('Upload complete:', result);
+              }}
+            />
+          )}
+          
           <button onClick={handleReset} className="btn btn-primary">
             Start New Assessment
           </button>

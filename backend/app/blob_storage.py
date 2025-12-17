@@ -62,27 +62,28 @@ class BlobStorageService:
     
     async def upload_file(
         self, 
-        file: UploadFile, 
-        project_id: int, 
-        question_id: str
+        file: UploadFile = None,
+        project_id: int = None,
+        question_id: str = None,
+        file_content: bytes = None,
+        file_name: str = None,
+        blob_path: str = None
     ) -> str:
         """
         Upload file to Azure Blob Storage
+        Supports two modes:
+        1. Legacy: file, project_id, question_id for question attachments
+        2. New: file_content, file_name, blob_path for script results
         Returns the blob URL
         """
-        # Validate file first
-        self.validate_file(file)
-        
-        # Generate unique blob name
-        file_ext = os.path.splitext(file.filename)[1].lower()
-        blob_name = f"project_{project_id}/question_{question_id}/{uuid.uuid4()}{file_ext}"
-        
-        try:
-            # Get blob client
-            blob_client = self.blob_service_client.get_blob_client(
-                container=self.container_name,
-                blob=blob_name
-            )
+        # Mode 1: Legacy question attachment upload
+        if file is not None and project_id is not None and question_id is not None:
+            # Validate file first
+            self.validate_file(file)
+            
+            # Generate unique blob name
+            file_ext = os.path.splitext(file.filename)[1].lower()
+            blob_name = f"project_{project_id}/question_{question_id}/{uuid.uuid4()}{file_ext}"
             
             # Read file content
             file_content = await file.read()
@@ -96,6 +97,38 @@ class BlobStorageService:
                 ".txt": "text/plain"
             }
             content_type = content_type_map.get(file_ext, "application/octet-stream")
+        
+        # Mode 2: New script result upload with custom path
+        elif file_content is not None and file_name is not None and blob_path is not None:
+            blob_name = blob_path
+            
+            # Determine content type
+            file_ext = os.path.splitext(file_name)[1].lower()
+            content_type_map = {
+                ".pdf": "application/pdf",
+                ".png": "image/png",
+                ".jpg": "image/jpeg",
+                ".jpeg": "image/jpeg",
+                ".txt": "text/plain",
+                ".csv": "text/csv",
+                ".json": "application/json",
+                ".xml": "application/xml",
+                ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                ".xls": "application/vnd.ms-excel",
+                ".log": "text/plain",
+                ".html": "text/html"
+            }
+            content_type = content_type_map.get(file_ext, "application/octet-stream")
+        
+        else:
+            raise ValueError("Invalid parameters: provide either (file, project_id, question_id) or (file_content, file_name, blob_path)")
+        
+        try:
+            # Get blob client
+            blob_client = self.blob_service_client.get_blob_client(
+                container=self.container_name,
+                blob=blob_name
+            )
             
             # Upload to blob storage
             blob_client.upload_blob(

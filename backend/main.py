@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routes import project_routes, question_routes, file_routes
+from app.routes import project_routes, question_routes, file_routes, script_routes, result_upload_routes
 
 app = FastAPI(title="Assessment App API", version="1.0.0")
 
@@ -28,6 +28,8 @@ async def startup_event():
 app.include_router(project_routes.router, prefix="/api", tags=["Projects"])
 app.include_router(question_routes.router, prefix="/api", tags=["Questions"])
 app.include_router(file_routes.router, prefix="/api/files", tags=["File Upload"])
+app.include_router(script_routes.router, prefix="/api/script", tags=["Script Download"])
+app.include_router(result_upload_routes.router, prefix="/api/results", tags=["Script Results"])
 
 @app.get("/")
 def read_root():

@@ -43,4 +43,52 @@ export const getProjectResponses = async (projectId) => {
   return response.data;
 };
 
+// Script Download APIs
+export const getScriptList = async () => {
+  const response = await api.get('/script/list');
+  return response.data;
+};
+
+export const downloadScript = async (filename) => {
+  const response = await api.get(`/script/download/${filename}`, {
+    responseType: 'blob', // Important for file download
+  });
+  
+  // Create blob link to download
+  const url = window.URL.createObjectURL(new Blob([response.data]));
+  const link = document.createElement('a');
+  link.href = url;
+  link.setAttribute('download', filename);
+  document.body.appendChild(link);
+  link.click();
+  link.parentNode.removeChild(link);
+  window.URL.revokeObjectURL(url);
+};
+
+// Script Results Upload APIs
+export const uploadScriptResults = async (projectId, files) => {
+  const formData = new FormData();
+  files.forEach((file) => {
+    formData.append('files', file);
+  });
+  
+  const response = await api.post(`/results/upload-results/${projectId}`, formData, {
+    headers: {
+      'Content-Type': 'multipart/form-data',
+    },
+  });
+  
+  return response.data;
+};
+
+export const getProjectResults = async (projectId) => {
+  const response = await api.get(`/results/results/${projectId}`);
+  return response.data;
+};
+
+export const deleteScriptResult = async (resultId) => {
+  const response = await api.delete(`/results/results/${resultId}`);
+  return response.data;
+};
+
 export default api;

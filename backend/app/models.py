@@ -19,6 +19,7 @@ class Project(Base):
 
     # Relationships
     responses = relationship("Response", back_populates="project", cascade="all, delete-orphan")
+    script_results = relationship("ScriptResult", back_populates="project", cascade="all, delete-orphan")
 
 class Response(Base):
     __tablename__ = "tpsm_responses"
@@ -35,3 +36,19 @@ class Response(Base):
 
     # Relationships
     project = relationship("Project", back_populates="responses")
+
+class ScriptResult(Base):
+    __tablename__ = "tpsm_script_results"
+    __table_args__ = {'schema': 'dbo'}
+
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, ForeignKey("dbo.tpsm_projects.id"), nullable=False)
+    original_filename = Column(String(500), nullable=False)  # Original name of uploaded file
+    stored_filename = Column(String(500), nullable=False)  # Name in blob storage
+    blob_url = Column(String(1000), nullable=False)  # Full URL to blob storage
+    file_size = Column(Integer, nullable=False)  # File size in bytes
+    file_type = Column(String(100), nullable=True)  # MIME type or extension
+    uploaded_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    # Relationships
+    project = relationship("Project", back_populates="script_results")
