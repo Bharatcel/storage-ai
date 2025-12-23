@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import BasicInfoForm from './BasicInfoForm';
 import QuestionsForm from './QuestionsForm';
 import ResultsUpload from './ResultsUpload';
@@ -6,6 +7,7 @@ import { getQuestions, createCompleteAssessment, getScriptList, downloadScript }
 import './AssessmentForm.css';
 
 const AssessmentForm = () => {
+  const navigate = useNavigate();
   const [currentStep, setCurrentStep] = useState(1);
   const [projectData, setProjectData] = useState(null);
   const [questions, setQuestions] = useState({ general: [], technical: [] });
@@ -76,7 +78,16 @@ const AssessmentForm = () => {
         responses: formattedResponses
       };
 
-      await createCompleteAssessment(assessmentData);
+      const result = await createCompleteAssessment(assessmentData);
+      
+      // Update projectData with the returned project ID
+      if (result && result.project_id) {
+        setProjectData(prev => ({
+          ...prev,
+          id: result.project_id
+        }));
+      }
+      
       setSuccess(true);
       setCurrentStep(3);
     } catch (err) {
@@ -182,9 +193,14 @@ const AssessmentForm = () => {
             />
           )}
           
-          <button onClick={handleReset} className="btn btn-primary">
-            Start New Assessment
-          </button>
+          <div className="success-actions">
+            <button onClick={handleReset} className="btn btn-secondary">
+              Start New Assessment
+            </button>
+            <button onClick={() => navigate('/projects')} className="btn btn-primary">
+              View All Projects →
+            </button>
+          </div>
         </div>
       )}
     </div>

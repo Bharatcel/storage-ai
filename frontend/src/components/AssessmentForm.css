@@ -193,3 +193,15 @@
   cursor: not-allowed;
   transform: none;
 }
+
+.success-actions {
+  display: flex;
+  gap: 1rem;
+  justify-content: center;
+  margin-top: 2rem;
+}
+
+.success-actions .btn {
+  flex: 1;
+  max-width: 250px;
+}

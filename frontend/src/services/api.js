@@ -91,4 +91,25 @@ export const deleteScriptResult = async (resultId) => {
   return response.data;
 };
 
+// Storage Analysis APIs
+export const triggerAnalysis = async (projectId) => {
+  const response = await api.post(`/analysis/trigger/${projectId}`);
+  return response.data;
+};
+
+export const getAnalysisStatus = async (projectId) => {
+  const response = await api.get(`/analysis/status/${projectId}`);
+  return response.data;
+};
+
+export const getAnalysisResults = async (projectId) => {
+  const response = await api.get(`/analysis/results/${projectId}`);
+  return response.data;
+};
+
+export const deleteAnalysisResults = async (projectId) => {
+  const response = await api.delete(`/analysis/results/${projectId}`);
+  return response.data;
+};
+
 export default api;

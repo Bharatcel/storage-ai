@@ -8,6 +8,17 @@ const ResultsUpload = ({ projectId, onUploadComplete }) => {
   const [error, setError] = useState(null);
   const [uploadProgress, setUploadProgress] = useState(null);
 
+  // Don't render if projectId is missing
+  if (!projectId) {
+    return (
+      <div className="results-upload-container">
+        <div className="alert alert-warning">
+          Project ID not available. Please complete the assessment first.
+        </div>
+      </div>
+    );
+  }
+
   const handleFileSelect = (event) => {
     const files = Array.from(event.target.files);
     setSelectedFiles(prevFiles => [...prevFiles, ...files]);
@@ -49,7 +60,22 @@ const ResultsUpload = ({ projectId, onUploadComplete }) => {
       }, 2000);
     } catch (err) {
       console.error('Upload error:', err);
-      setError(err.response?.data?.detail || 'Failed to upload files. Please try again.');
+      console.error('Error details:', err.response?.data);
+      
+      // Extract error message
+      let errorMessage = 'Failed to upload files. Please try again.';
+      if (err.response?.data?.detail) {
+        const detail = err.response.data.detail;
+        errorMessage = typeof detail === 'string' 
+          ? detail 
+          : (Array.isArray(detail) 
+            ? detail.map(e => e.msg || JSON.stringify(e)).join(', ')
+            : JSON.stringify(detail));
+      } else if (err.message) {
+        errorMessage = err.message;
+      }
+      
+      setError(errorMessage);
       setUploadProgress(null);
     } finally {
       setUploading(false);
