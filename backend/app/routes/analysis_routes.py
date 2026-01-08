@@ -135,7 +135,15 @@ def get_analysis_results(project_id: int, db: Session = Depends(get_db)):
         "file_types": json.loads(results.file_types) if results.file_types else [],
         "storage_tiers": json.loads(results.storage_tiers) if results.storage_tiers else [],
         "cost_analysis": json.loads(results.cost_analysis) if results.cost_analysis else None,
-        "growth_projection": json.loads(results.growth_projection) if results.growth_projection else None
+        "growth_projection": json.loads(results.growth_projection) if results.growth_projection else None,
+        "duplicate_files": json.loads(results.duplicate_files) if results.duplicate_files else None,
+        "script_metadata": json.loads(results.script_metadata) if results.script_metadata else None,
+        # PHASE 1: Enhanced Analysis Results
+        "access_patterns": json.loads(results.access_patterns) if results.access_patterns else None,
+        "duplicates_advanced": json.loads(results.duplicates_advanced) if results.duplicates_advanced else None,
+        "directory_analysis": json.loads(results.directory_analysis) if results.directory_analysis else None,
+        "data_quality": json.loads(results.data_quality) if results.data_quality else None,
+        "recommendations": json.loads(results.recommendations) if results.recommendations else []
     }
 
 

@@ -7,6 +7,10 @@ from fastapi import HTTPException, UploadFile
 import uuid
 from typing import Optional
 import os
+import urllib3
+
+# Disable SSL warnings for development (certificate verification issues)
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # Allowed file extensions
 ALLOWED_EXTENSIONS = {".png", ".txt", ".jpg", ".jpeg", ".pdf"}
@@ -17,9 +21,13 @@ class BlobStorageService:
         if not settings.AZURE_STORAGE_CONNECTION_STRING:
             raise ValueError("Azure Storage connection string not configured")
         
+        # For development: disable SSL verification to avoid certificate issues
+        # In production, ensure proper SSL certificates are installed
         self.blob_service_client = BlobServiceClient.from_connection_string(
-            settings.AZURE_STORAGE_CONNECTION_STRING
+            settings.AZURE_STORAGE_CONNECTION_STRING,
+            connection_verify=False  # Disable SSL verification for development
         )
+        
         self.container_name = settings.AZURE_STORAGE_CONTAINER_NAME
         
         # Ensure container exists

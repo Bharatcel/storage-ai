@@ -86,6 +86,13 @@ class AnalysisResults(Base):
     storage_tiers = Column(String, nullable=True)  # JSON
     cost_analysis = Column(String, nullable=True)  # JSON
     growth_projection = Column(String, nullable=True)  # JSON
+    duplicate_files = Column(String, nullable=True)  # JSON - Duplicate file analysis
+    script_metadata = Column(String, nullable=True)  # JSON - Script generation details
+    access_patterns = Column(String, nullable=True)  # JSON - PHASE1: Access frequency analysis
+    duplicates_advanced = Column(String, nullable=True)  # JSON - PHASE1: Advanced duplicate detection
+    directory_analysis = Column(String, nullable=True)  # JSON - PHASE1: Directory-level insights
+    data_quality = Column(String, nullable=True)  # JSON - PHASE1: Data quality assessment
+    recommendations = Column(String, nullable=True)  # JSON - PHASE1: Actionable recommendations
     analyzed_at = Column(DateTime(timezone=True), server_default=func.now())
 
 class AnalysisSummary(Base):
