@@ -1,0 +1,90 @@
+DevOps Capability Assessment Project
+1. Executive Elevator Pitch
+TP Orion is an AI-assisted DevOps capability assessment platform that guides enterprise teams through a structured maturity evaluation. A React front-end orchestrates the interview-style workflow, while a FastAPI backend pairs deterministic scoring with Azure OpenAI reasoning to generate follow-up probes, sufficiency checks, and tailored remediation roadmaps. Assessment state, generated reports, and secrets are managed with Azure-native services, enabling repeatable, compliant advisory engagements.
+
+Your talking points
+"I delivered an end-to-end assessment experience where the UI, API, and Azure services stay in sync around a single user session ID."
+"I engineered guardrails like skip thresholds and sufficiency validation so AI suggestions remain grounded in the collected evidence."
+"I automated post-assessment assets (PDF/HTML exports, recommendation bundles) to jump-start stakeholder conversations."
+2. System Architecture At A Glance
+Layer	Tech	Responsibilities
+Front-end	React 18 + Vite	Session bootstrap, question navigation, skip tracking, follow-up capture, surfacing category/overall recommendations, download actions
+API	FastAPI, Pydantic	State management APIs, LLM orchestration, scoring, skip enforcement, recommendation aggregation, asset generation
+AI & Data	Azure OpenAI, Azure SQL, Azure Blob Storage, Azure Key Vault	Prompted reasoning, question catalog, answer persistence, state blobs, report storage, secret governance
+Key integration points:
+
+All UI calls use a generated user_id (/session/start). That ID ties SQL answer rows, blob state, and report files together.
+Azure Key Vault supplies secrets for SQL, OpenAI, and Blob Storage, injected at runtime by AzureKeyVaultManager.
+Follow-up workflows call Azure OpenAI with chunked prompts (chunk_summary_for_llm) to respect token limits.
+3. Backend Walkthrough (FastAPI)
+Session & State Services
+POST /session/start creates a GUID used across the assessment.
+State blobs are stored per user in Azure Blob (assessment_state_<user>.json) managed by AzureBlobStateManager.
+Question Flow
+GET /categories composes category completion status by combining SQL catalog entries with stored answers and follow-ups.
+GET /questions/next streams unanswered baseline questions per category.
+POST /answers/submit persists answers to Azure SQL via QuestionsDB and mirrors them in the blob state. It recalculates completion, logging debug insights for observability.
+Sufficiency, Follow-ups, and Recommendations
+POST /assessment/check_and_followups:
+Builds a category summary (build_assessment_summary_for_category).
+Enforces skip limit (>=40% unanswered) before LLM calls.
+Invokes Azure OpenAI to judge sufficiency; if lacking, generates follow-up questions using call_llm_for_follow_ups_category with deduping against historical follow-ups.
+Computes category scoring metrics (initial vs follow-up) for the UI.
+POST /assessment/recommendations (see call_llm_for_recommendations_only) synthesizes action plans once sufficiency is achieved.
+generate_and_store_report converts final insights into HTML/PDF, uploads to Blob Storage, and returns shareable URLs.
+Supporting Utilities
+calculate_scores and build_assessment_summary compute maturity percentages for each domain.
+chunk_summary_for_llm splits long payloads to protect against token overflow in Azure OpenAI calls.
+Logging is centralized via devops_agent.log and api_debug.log for operational telemetry.
+Azure Dependencies
+Azure SQL (QuestionsDB): serves question catalog, follow-up storage, and captured answers.
+Azure Blob Storage: session state, generated reports, and follow-up artifacts.
+Azure Key Vault: rotated secrets for all credentials (kv_manager.get_secret).
+Azure OpenAI: conversation, sufficiency validation, follow-up generation, recommendation authoring.
+4. Front-end Walkthrough (React + Vite)
+Application Shell (App.jsx)
+Bootstraps a user session by calling /session/start and stores the returned userId.
+Loads category completion data, highlights resets, and enforces a skip ceiling (40%) with banner messaging.
+Governs a dual-track questionnaire: baseline questions followed by LLM-generated follow-ups.
+Tracks answer counts, skip counts, and sufficiency flags to time backend calls.
+Surfaces AI progress copy (AI_INITIAL_MESSAGES, AI_RECHECK_MESSAGES) during long-running checks.
+Question Capture (QuestionForm.jsx)
+Renders dynamic controls (radio, checkbox, slider, text) based on question metadata from the API.
+Sends answers through the handleAnswer callback, which maps to /answers/submit.
+Recommendations (Recommendations.jsx, AllRecommendations.jsx)
+Displays category-specific and overall recommendations once sufficiency is met.
+Integrates with custom hooks (useCategoryRecommendations, useOverallRecommendations) that lazily fetch LLM outputs and scores.
+UI Enhancements
+BackgroundOverlay adds brand-consistent gradients.
+Modals (Overall & Category) show scorecards and allow download of export bundles.
+CTA buttons connect to the teaser landing page assets you built (orion-release-teaser.html) including Launch TP ORION and Sample Report download.
+5. Data & AI Lifecycle
+Question Catalog: Stored in Azure SQL with categories, baseline questions, and potential follow-ups (is_follow_up).
+Answer Ingestion: /answers/submit writes each response, optional comments, and whether it was follow-up driven.
+Skip Monitoring: Blob state tracks unanswered ratio; passing 40% triggers a hard stop in the backend and a reset in the UI.
+Sufficiency Evaluation: Azure OpenAI reviews category summaries; insufficiency triggers contextual follow-ups.
+Recommendation Generation: Once sufficient, call_llm_for_recommendations_only produces actionable steps, stored and exposed to the UI.
+Report Packaging: generate_and_store_report assembles HTML/PDF artifacts, uploads to Blob, and returns secure URLs for stakeholders.
+6. Operational Considerations
+Security: No secrets hard-coded; Key Vault retrieval happens at startup. CORS is fully open for now—mention tightening origins for production.
+Observability: Extensive print and logging.debug outputs document category stats, sufficiency results, and follow-up dedupe decisions. Consider log aggregation (App Insights) as a next step.
+Scalability: FastAPI endpoints are stateless; horizontal scale depends on Blob + SQL throughput. AI calls are the dominant latency—chunking and async improvements are possible.
+Error Handling: Exceptions bubble as HTTP 400/500 responses; UI monitors res.ok and communicates via banners/modals.
+7. Interview Storyline Checklist
+Use these prompts to steer the conversation:
+
+Problem Statement: Manual DevOps assessments were slow and inconsistent; Orion automates discovery and produces immediate remediation guidance.
+Your Role: Full-stack ownership—React experience layer, FastAPI services, Azure integration, and marketing teaser collateral.
+AI Guardrails: Implemented skip thresholds, sufficiency checks, and question dedupe so AI outputs stay relevant and auditable.
+Scoring Logic: Weighted scoring across categories with initial vs follow-up separation to highlight confidence levels.
+State Management: Unified user_id ensures UI, SQL, and Blob state remain consistent; reset endpoints let admins rerun categories cleanly.
+Deliverables: Live assessment UI, recommendation modals, export packages, and the branded release teaser that links directly to the app and sample report.
+Results & Next Steps: Enabled rapid maturity assessments; next enhancements could include role-based dashboards, deeper analytics, and production-grade observability.
+8. Quick Reference (Fast Answers)
+Tech Stack: React 18, Vite, FastAPI, Azure SQL, Azure Blob, Azure Key Vault, Azure OpenAI.
+Key Endpoints: /session/start, /categories, /questions/next, /answers/submit, /assessment/check_and_followups.
+AI Model: Azure OpenAI GPT deployment accessed via AzureOpenAI client (api_version=2025-01-01-preview).
+Skip Rule: 40% unanswered baseline questions halts recommendations until completed.
+Report Storage: Blob path reports/<user>_DevOps_Assessment_Report_<timestamp>.html.
+Front-end Hosting: Vite build; API base currently points to https://aznprd-neu-orion-app09.azurewebsites.net.
+Keep this brief handy during your interview to speak confidently about design choices, safeguards, and business outcomes.
