@@ -1,0 +1,890 @@
+Semantic Kernel Chat API - Python Migration
+Table of Contents
+Overview
+Architecture
+Technical Stack
+Project Structure
+Database Schema
+API Endpoints
+Semantic Kernel Integration
+Setup & Installation
+Configuration
+Development Guide
+Deployment
+Troubleshooting
+Migration Notes
+Overview
+What is This Project?
+A production-grade conversational AI platform that provides a unified chat interface to query multiple enterprise systems using Azure OpenAI GPT-4 with function calling capabilities. This is a Python/FastAPI migration of the original .NET Semantic Kernel Chat API.
+
+Business Value
+Unified Interface: Single chat endpoint to access 7 different backend systems
+AI-Powered Routing: Automatically selects appropriate tools based on user intent
+Context-Aware: Maintains conversation history across sessions
+Enterprise-Ready: JWT authentication, audit trails, content safety, telemetry
+Key Capabilities
+Database - Execute SQL queries on production databases
+Azure DevOps - Query work items, sprints, backlogs
+FinOps - Financial operations and cost analysis
+Knowledge Base - Search internal documentation
+Project Lifecycle - Project status and milestones
+Security Monitoring - Security alerts and compliance
+Site Navigation - Navigate internal portals
+Architecture
+High-Level System Design
+┌─────────────┐
+│   Client    │
+│ (Frontend)  │
+└──────┬──────┘
+       │ HTTP/REST
+┌──────▼──────────────────────────────────────┐
+│         FastAPI Application                 │
+│  ┌────────────┐      ┌──────────────┐      │
+│  │   Auth     │      │ Conversation │      │
+│  │   Layer    │──────▶  Controller  │      │
+│  │   (JWT)    │      │              │      │
+│  └────────────┘      └──────┬───────┘      │
+│                             │               │
+│  ┌──────────────────────────▼──────────┐   │
+│  │       ChatService                   │   │
+│  │  (AI Orchestration Engine)          │   │
+│  │   ┌─────────────────────────────┐   │   │
+│  │   │   Semantic Kernel           │   │   │
+│  │   │  - Chat History Management  │   │   │
+│  │   │  - Function Calling         │   │   │
+│  │   │  - Prompt Engineering       │   │   │
+│  │   └──────────┬──────────────────┘   │   │
+│  └──────────────┼──────────────────────┘   │
+└─────────────────┼──────────────────────────┘
+                  │
+    ┌─────────────┼─────────────┐
+    │             │             │
+┌───▼────┐  ┌────▼─────┐  ┌───▼─────┐
+│ Azure  │  │  Azure   │  │Database │
+│OpenAI  │  │  SQL DB  │  │ Plugins │
+│ GPT-4  │  │          │  │ (7 Tools)│
+└────────┘  └──────────┘  └─────────┘
+Layered Architecture
+Presentation Layer (src/api/)
+
+REST API endpoints
+Request/response validation
+Authentication middleware
+Business Logic Layer (src/services/)
+
+Core application logic
+AI orchestration
+Business rules
+Data Access Layer (src/data/)
+
+Database operations
+ORM models
+Connection management
+AI Layer (src/kernels/)
+
+Semantic Kernel configuration
+Plugin/tool implementations
+Prompt engineering
+Configuration Layer (src/core/)
+
+Environment settings
+Application configuration
+Technical Stack
+Core Technologies
+Component	Technology	Version	Purpose
+Framework	FastAPI	0.115.6	Async web framework
+Runtime	Python	3.12.9	Programming language
+Database	Azure SQL Server	-	Data persistence
+ORM	SQLAlchemy	2.0.36	Database abstraction
+DB Driver	pyodbc + aioodbc	5.2.0 / 0.5.0	Async SQL driver
+AI Framework	Semantic Kernel	1.39.2	AI orchestration
+LLM Provider	Azure OpenAI	-	GPT-4 model
+Authentication	JWT	python-jose 3.3.0	Token-based auth
+Validation	Pydantic	2.10.5	Data validation
+Server	Uvicorn	0.34.0	ASGI server
+Testing	pytest	7.4.4	Unit/integration tests
+Key Dependencies
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+pydantic==2.10.5
+sqlalchemy[asyncio]==2.0.36
+semantic-kernel==1.39.2
+azure-identity==1.19.0
+openai>=1.98.0,<2
+python-jose[cryptography]==3.3.0
+email-validator==2.3.0
+Project Structure
+python_migration/
+├── src/
+│   ├── __init__.py
+│   ├── main.py                      # Application entry point
+│   │
+│   ├── api/                         # API Layer
+│   │   ├── __init__.py
+│   │   ├── routes.py                # Conversation endpoints
+│   │   ├── auth_routes.py           # Authentication endpoints
+│   │   └── dtos.py                  # Request/Response models
+│   │
+│   ├── services/                    # Business Logic Layer
+│   │   ├── __init__.py
+│   │   ├── chat_service.py          # AI orchestration (328 lines)
+│   │   ├── user_service.py          # User management
+│   │   ├── conversation_service.py  # Conversation CRUD
+│   │   └── message_service.py       # Message operations
+│   │
+│   ├── data/                        # Data Access Layer
+│   │   ├── __init__.py
+│   │   ├── database.py              # DB connection & session
+│   │   └── models.py                # SQLAlchemy ORM models
+│   │
+│   ├── kernels/                     # AI Layer
+│   │   └── kernel_factory.py        # Semantic Kernel setup
+│   │
+│   └── core/                        # Configuration
+│       ├── __init__.py
+│       └── config.py                # Pydantic Settings
+│
+├── tests/                           # Test Suite
+│   ├── __init__.py
+│   ├── test_services.py
+│   └── test_api.py
+│
+├── .env                             # Environment variables (not in repo)
+├── requirements.txt                 # Python dependencies
+├── Dockerfile                       # Container definition
+├── docker-compose.yml               # Local development stack
+└── README.md                        # Quick start guide
+Database Schema
+Entity Relationship Diagram
+AgentUsers (1) ──────< (N) AgentConversations (1) ──────< (N) AgentMessages
+                              │
+                              │ (1)
+                              ▼ (N)
+                        AgentMetrics
+Tables
+AgentUsers
+Column	Type	Description
+UserId	UNIQUEIDENTIFIER (PK)	Primary key
+Email	NVARCHAR(255) UNIQUE	User email address
+CreatedAt	DATETIME2	Account creation timestamp
+Purpose: User identity and authentication
+
+AgentConversations
+Column	Type	Description
+ConversationId	UNIQUEIDENTIFIER (PK)	Primary key
+UserId	UNIQUEIDENTIFIER (FK)	Owner of conversation
+Title	NVARCHAR(255)	Conversation title
+CreatedAt	DATETIME2	Creation timestamp
+LastActivityAt	DATETIME2	Last interaction time
+Purpose: Conversation session management
+
+Indexes:
+
+IX_AgentConversations_UserId on UserId
+IX_AgentConversations_LastActivityAt on LastActivityAt
+AgentMessages
+Column	Type	Description
+MessageId	UNIQUEIDENTIFIER (PK)	Primary key
+ConversationId	UNIQUEIDENTIFIER (FK)	Parent conversation
+Role	NVARCHAR(50)	'user' or 'assistant'
+Content	NVARCHAR(MAX)	Message text
+Metadata	NVARCHAR(MAX)	JSON metadata
+ModelUsed	NVARCHAR(100)	AI model name
+ToolName	NVARCHAR(100)	Function called (nullable)
+RequestJson	NVARCHAR(MAX)	Tool input JSON
+ResponseJson	NVARCHAR(MAX)	Tool output JSON
+StartedAt	DATETIME2	Processing start
+EndedAt	DATETIME2	Processing end
+CreatedAt	DATETIME2	Record creation
+Purpose: Full audit trail of all messages and tool invocations
+
+Indexes:
+
+IX_AgentMessages_ConversationId on ConversationId
+IX_AgentMessages_CreatedAt on CreatedAt
+AgentMetrics
+Column	Type	Description
+MetricId	UNIQUEIDENTIFIER (PK)	Primary key
+ConversationId	UNIQUEIDENTIFIER (FK)	Related conversation
+TokensUsed	INT	Token count
+Duration	INT	Processing time (ms)
+CreatedAt	DATETIME2	Metric timestamp
+Purpose: Performance monitoring and cost tracking
+
+API Endpoints
+Authentication
+POST /api/auth/login
+Authenticate user and receive JWT token.
+
+Request:
+
+{
+  "email": "user@company.com",
+  "password": "secret123"
+}
+Response (200 OK):
+
+{
+  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "token_type": "bearer",
+  "expires_in": 86400
+}
+Errors:
+
+401 Unauthorized: Invalid credentials
+400 Bad Request: Missing fields
+GET /api/auth/me
+Get current authenticated user information.
+
+Headers:
+
+Authorization: Bearer <token>
+Response (200 OK):
+
+{
+  "user_id": "26d351cb-f37b-43ff-9163-3bf0a2d64e04",
+  "email": "user@company.com"
+}
+Errors:
+
+401 Unauthorized: Invalid/expired token
+Conversations
+POST /api/conversations/{email}/query
+Process a user query with AI.
+
+Path Parameters:
+
+email: User email identifier
+Request:
+
+{
+  "query": "Show me all work items created last month",
+  "conversation_id": "91f69941-31d9-486b-8ffc-e3c0df68ca4b"  // optional
+}
+Response (200 OK):
+
+{
+  "message_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "content": "Here are the work items from December 2025:\n\n| ID | Title | Status |\n|---|---|---|\n| 1234 | Feature X | Active |\n| 1235 | Bug fix Y | Closed |",
+  "tool_name": "AzureDevOps",
+  "model_used": "gpt-4",
+  "is_truncated": false
+}
+Process Flow:
+
+Extract email from path
+Get/create user in database
+Get/create conversation (new if conversation_id is null)
+Load last 10 messages for context
+Initialize Semantic Kernel
+Invoke AI with function calling
+Save user message + AI response
+Update conversation timestamp
+Return response
+Errors:
+
+500 Internal Server Error: AI processing failed
+403 Forbidden: Network restrictions (VNet)
+GET /api/conversation/list/{user_id}
+List all conversations for a user.
+
+Path Parameters:
+
+user_id: User email address
+Response (200 OK):
+
+[
+  {
+    "conversation_id": "91f69941-31d9-486b-8ffc-e3c0df68ca4b",
+    "user_id": "26d351cb-f37b-43ff-9163-3bf0a2d64e04",
+    "title": "Azure DevOps Query",
+    "created_at": "2026-01-29T13:34:38.771627",
+    "last_activity_at": "2026-01-29T19:06:11.384000",
+    "messages": [
+      {
+        "message_id": "...",
+        "role": "user",
+        "content": "Show me work items",
+        "created_at": "2026-01-29T13:35:00"
+      }
+    ]
+  }
+]
+Note: Uses selectinload() for efficient eager loading of messages
+
+GET /api/conversation/{conversation_id}
+Get a single conversation with full history.
+
+Path Parameters:
+
+conversation_id: Conversation UUID
+Query Parameters:
+
+limit: Maximum messages to return (default: 50)
+Response (200 OK):
+
+{
+  "conversation_id": "91f69941-31d9-486b-8ffc-e3c0df68ca4b",
+  "user_id": "26d351cb-f37b-43ff-9163-3bf0a2d64e04",
+  "title": "New Chat",
+  "created_at": "2026-01-29T13:34:38.771627",
+  "last_activity_at": "2026-01-29T19:06:11.384000",
+  "messages": [...]
+}
+Errors:
+
+404 Not Found: Conversation doesn't exist
+DELETE /api/conversation/{conversation_id}
+Delete a conversation and all its messages.
+
+Path Parameters:
+
+conversation_id: Conversation UUID
+Response (204 No Content)
+
+Note: Cascading delete removes all associated messages and metrics
+
+Semantic Kernel Integration
+What is Semantic Kernel?
+Microsoft's AI orchestration framework that:
+
+Provides consistent API for multiple LLM providers
+Manages conversation context (chat history)
+Enables function calling (tool invocation)
+Handles prompt engineering and execution
+System Prompt
+SYSTEM_PROMPT = """
+You are GINA (GitHub Intelligence and Notification Assistant), 
+an advanced AI assistant for Teleperformance employees.
+
+You have access to 7 capabilities:
+
+1. **Database** - Execute SQL queries on production databases
+2. **AzureDevOps** - Query work items, sprints, backlogs, repos
+3. **FinOps** - Financial operations, cost analysis, budget tracking
+4. **KnowledgeBase** - Search documentation, wikis, knowledge articles
+5. **ProjectLifecycle** - Project status, milestones, deliverables
+6. **SecurityMonitoring** - Security alerts, compliance checks, incidents
+7. **SiteNavigation** - Navigate internal portals and resources
+
+IMPORTANT GUIDELINES:
+- Always verify information before providing answers
+- Cite sources when presenting data
+- Ask clarifying questions if the request is ambiguous
+- Format data in tables or lists for readability
+- Escalate sensitive operations to human approval
+- Never expose credentials or sensitive system information
+- Be professional, helpful, and concise
+"""
+Kernel Initialization
+File: src/services/chat_service.py
+
+async def initialize_kernel(self) -> Kernel:
+    """Initialize Semantic Kernel with Azure OpenAI"""
+    kernel = Kernel()
+    
+    # Add Azure OpenAI chat completion service
+    chat_service = AzureChatCompletion(
+        service_id="azure_openai",
+        deployment_name=settings.AZURE_OPENAI_DEPLOYMENT_NAME,  # "TP_GINA"
+        endpoint=settings.AZURE_OPENAI_ENDPOINT,
+        api_key=settings.AZURE_OPENAI_API_KEY,
+        api_version="2024-02-15-preview"
+    )
+    
+    kernel.add_service(chat_service)
+    
+    # Register function plugins (7 tools)
+    # TODO: Implement each plugin class
+    kernel.add_plugin(DatabasePlugin(), "Database")
+    kernel.add_plugin(AzureDevOpsPlugin(), "AzureDevOps")
+    kernel.add_plugin(FinOpsPlugin(), "FinOps")
+    kernel.add_plugin(KnowledgeBasePlugin(), "KnowledgeBase")
+    kernel.add_plugin(ProjectLifecyclePlugin(), "ProjectLifecycle")
+    kernel.add_plugin(SecurityMonitoringPlugin(), "SecurityMonitoring")
+    kernel.add_plugin(SiteNavigationPlugin(), "SiteNavigation")
+    
+    return kernel
+Chat History Management
+async def _build_chat_history(
+    self, 
+    conversation_id: UUID, 
+    limit: int = 10
+) -> ChatHistory:
+    """Load conversation history from database"""
+    
+    history = ChatHistory()
+    history.add_system_message(SYSTEM_PROMPT)
+    
+    # Load last N messages
+    messages = await MessageService.get_messages(
+        self.db, 
+        conversation_id, 
+        limit=limit
+    )
+    
+    for msg in messages:
+        if msg.Role == "user":
+            history.add_user_message(msg.Content)
+        elif msg.Role == "assistant":
+            history.add_assistant_message(msg.Content)
+    
+    return history
+Function Calling Execution
+async def _invoke_ai(
+    self, 
+    kernel: Kernel, 
+    history: ChatHistory, 
+    user_query: str
+) -> AIResponse:
+    """Execute AI query with function calling enabled"""
+    
+    # Add user query to history
+    history.add_user_message(user_query)
+    
+    # Configure function calling behavior
+    settings = AzureChatPromptExecutionSettings(
+        function_choice_behavior=FunctionChoiceBehavior.Auto()
+    )
+    
+    # Get AI service from kernel
+    chat_service = kernel.get_service(type=ChatCompletionClientBase)
+    
+    # Execute with automatic function calling
+    response = await chat_service.get_chat_message_content(
+        chat_history=history,
+        settings=settings,
+        kernel=kernel
+    )
+    
+    return AIResponse(
+        content=str(response),
+        tool_name=getattr(response, "function_name", None),
+        model_used="gpt-4"
+    )
+How Function Calling Works
+Example Flow:
+
+User Query: "Show me all work items created last month"
+
+AI Analysis: GPT-4 recognizes this requires AzureDevOps.GetWorkItems()
+
+Function Signature (from plugin):
+
+@kernel_function(
+    name="GetWorkItems",
+    description="Retrieves work items from Azure DevOps based on date range"
+)
+async def get_work_items(
+    self,
+    project: str,
+    start_date: str,
+    end_date: str
+) -> str:
+    # Implementation
+AI Decides to Call:
+{
+  "function": "AzureDevOps.GetWorkItems",
+  "arguments": {
+    "project": "MainProject",
+    "start_date": "2025-12-01",
+    "end_date": "2025-12-31"
+  }
+}
+Semantic Kernel Executes: Python function runs, queries Azure DevOps API
+
+Results Returned: JSON data with work items
+
+AI Formats Response: "Here are the work items from December 2025:..."
+
+Setup & Installation
+Prerequisites
+Python 3.12.9 (Python 3.13+ not supported by semantic-kernel)
+Access to Azure SQL Server
+Access to Azure OpenAI Service
+Git
+Step 1: Clone Repository
+git clone <repository-url>
+cd SemanticKernelChatApi/python_migration
+Step 2: Create Virtual Environment
+Windows:
+
+py -3.12 -m venv venv_312
+.\venv_312\Scripts\activate
+Linux/Mac:
+
+python3.12 -m venv venv_312
+source venv_312/bin/activate
+Step 3: Install Dependencies
+pip install --upgrade pip
+pip install -r requirements.txt
+Key packages installed:
+
+fastapi, uvicorn (web framework)
+sqlalchemy, aioodbc, pyodbc (database)
+semantic-kernel (AI orchestration)
+azure-identity, openai (Azure services)
+python-jose (JWT auth)
+email-validator (Pydantic email validation)
+Step 4: Configure Environment
+Create .env file in project root:
+
+# Application
+APP_NAME=Semantic Kernel Chat API
+DEBUG=False
+
+# Database
+DATABASE_SERVER=azprd-neu-ghub-sql-01.database.windows.net
+DATABASE_NAME=azprd-neu-ghub-sqldb-02
+DATABASE_USER=your_username
+DATABASE_PASSWORD=your_password
+DATABASE_DRIVER=ODBC Driver 17 for SQL Server
+
+# Azure OpenAI
+AZURE_OPENAI_ENDPOINT=https://azprd-eus-ghub-openai01.openai.azure.com
+AZURE_OPENAI_API_KEY=your_api_key
+AZURE_OPENAI_DEPLOYMENT_NAME=TP_GINA
+AZURE_OPENAI_API_VERSION=2024-02-01
+
+# JWT
+JWT_SECRET_KEY=your-secret-key-here-change-in-production
+JWT_ALGORITHM=HS256
+JWT_EXPIRY_HOURS=24
+
+# CORS
+ALLOWED_ORIGINS=http://localhost:3000,https://*.azurewebsites.net
+Step 5: Verify Database Connection
+python -c "from src.core.config import settings; print(settings.database_url)"
+Step 6: Run Application
+uvicorn src.main:app --reload --host 127.0.0.1 --port 8000
+Or using venv_312 explicitly:
+
+.\venv_312\Scripts\python.exe -m uvicorn src.main:app --reload --host 127.0.0.1 --port 8000
+Expected Output:
+
+INFO:     Will watch for changes in these directories: [...]
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+INFO:     Started reloader process [...]
+INFO:     Started server process [...]
+INFO:     Waiting for application startup.
+2026-01-30 10:00:00,000 - src.main - INFO - Starting Semantic Kernel Chat API (Python)
+2026-01-30 10:00:01,000 - src.data.database - INFO - Database connection verified
+2026-01-30 10:00:01,000 - src.main - INFO - Database initialized
+INFO:     Application startup complete.
+Step 7: Access API Documentation
+Open browser to:
+
+Swagger UI: http://127.0.0.1:8000/docs
+ReDoc: http://127.0.0.1:8000/redoc
+Health Check: http://127.0.0.1:8000/
+Configuration
+Environment Variables
+All configuration loaded via Pydantic Settings from .env file.
+
+File: src/core/config.py
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=True
+    )
+    
+    # Application
+    APP_NAME: str = "Semantic Kernel Chat API"
+    DEBUG: bool = False
+    ALLOWED_ORIGINS: List[str] = [...]
+    
+    # Database
+    DATABASE_SERVER: str
+    DATABASE_NAME: str
+    DATABASE_USER: str
+    DATABASE_PASSWORD: str
+    DATABASE_DRIVER: str = "ODBC Driver 17 for SQL Server"
+    
+    # Azure OpenAI
+    AZURE_OPENAI_ENDPOINT: str
+    AZURE_OPENAI_API_KEY: str
+    AZURE_OPENAI_DEPLOYMENT_NAME: str = "gpt-4"
+    AZURE_OPENAI_API_VERSION: str = "2024-02-01"
+    
+    # JWT
+    JWT_SECRET_KEY: str
+    JWT_ALGORITHM: str = "HS256"
+    JWT_EXPIRY_HOURS: int = 24
+    
+    @property
+    def database_url(self) -> str:
+        """Build database connection string"""
+        return (
+            f"mssql+aioodbc://{self.DATABASE_USER}:{self.DATABASE_PASSWORD}"
+            f"@{self.DATABASE_SERVER}/{self.DATABASE_NAME}"
+            f"?driver={self.DATABASE_DRIVER}"
+        )
+Benefits:
+
+Type validation
+Default values
+Environment-based configuration
+Easy testing with overrides
+Development Guide
+Running Tests
+pytest tests/ -v
+pytest tests/ --cov=src --cov-report=html
+Code Formatting
+black src/ tests/
+Type Checking
+mypy src/
+Database Migrations
+Note: Using SQLAlchemy without Alembic for now. For production, integrate Alembic:
+
+pip install alembic
+alembic init alembic
+alembic revision --autogenerate -m "Initial migration"
+alembic upgrade head
+Adding a New Plugin
+Create plugin class in src/kernels/plugins/:
+from semantic_kernel.functions import kernel_function
+
+class MyNewPlugin:
+    @kernel_function(
+        name="MyFunction",
+        description="What this function does"
+    )
+    async def my_function(
+        self,
+        param1: str,
+        param2: int
+    ) -> str:
+        # Implementation
+        return result
+Register in ChatService.initialize_kernel():
+kernel.add_plugin(MyNewPlugin(), "MyPlugin")
+Update system prompt to include new capability
+Logging
+Structured Logging throughout application:
+
+import logging
+
+logger = logging.getLogger(__name__)
+
+logger.info(f"Processing query for user: {user_id}")
+logger.error(f"Error: {e}", exc_info=True)
+SQLAlchemy Query Logging:
+
+engine = create_async_engine(url, echo=True)  # Logs all SQL
+Deployment
+Docker Deployment
+Dockerfile:
+
+FROM python:3.12-slim
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY src/ ./src/
+COPY .env .
+
+EXPOSE 8000
+
+CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
+Build & Run:
+
+docker build -t semantic-kernel-api .
+docker run -p 8000:8000 --env-file .env semantic-kernel-api
+Azure App Service Deployment
+Create App Service (Linux, Python 3.12)
+
+Configure Environment Variables in Azure Portal:
+
+All settings from .env
+Use Azure Key Vault for secrets
+Deploy:
+
+az webapp up --name my-app-name --resource-group my-rg
+Startup Command:
+gunicorn src.main:app -w 4 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000
+Production Checklist
+[ ] Set DEBUG=False
+[ ] Use strong JWT_SECRET_KEY (64+ characters)
+[ ] Enable HTTPS only
+[ ] Configure CORS properly
+[ ] Set up Application Insights telemetry
+[ ] Configure Azure Key Vault for secrets
+[ ] Enable database connection pooling monitoring
+[ ] Set up health check endpoints
+[ ] Configure log aggregation
+[ ] Enable rate limiting
+[ ] Set up CI/CD pipeline
+[ ] Configure backup strategy
+[ ] Enable Azure Private Link for OpenAI (VNet access)
+Troubleshooting
+Issue: ModuleNotFoundError: No module named 'semantic_kernel'
+Cause: Wrong Python version or venv not activated
+
+Solution:
+
+# Verify Python version
+python --version  # Should be 3.12.x
+
+# Activate correct venv
+.\venv_312\Scripts\activate
+
+# Verify installation
+pip show semantic-kernel
+Issue: MissingGreenlet Error with SQLAlchemy
+Cause: Lazy-loading relationships in async context
+
+Error:
+
+sqlalchemy.exc.MissingGreenlet: greenlet_spawn has not been called
+Solution: Use eager loading
+
+# BAD
+result = await db.execute(select(AgentConversation))
+conversations = result.scalars().all()
+for conv in conversations:
+    print(conv.messages)  # ERROR: lazy load in async
+
+# GOOD
+result = await db.execute(
+    select(AgentConversation)
+    .options(selectinload(AgentConversation.messages))
+)
+conversations = result.scalars().all()
+for conv in conversations:
+    print(conv.messages)  # OK: eager loaded
+Issue: 403 Forbidden from Azure OpenAI
+Error:
+
+PermissionDeniedError: Error code: 403
+A Virtual Network is configured for this resource
+Cause: Azure OpenAI has VNet restrictions, local machine not in allowed network
+
+Solutions:
+
+Deploy to Azure: Run in Azure App Service (same network)
+VPN Connection: Connect to corporate VPN with Azure access
+IP Whitelist: Add your IP in Azure Portal → OpenAI → Networking
+Private Endpoint: Configure private endpoint for development
+Issue: Connection Pool Exhausted
+Cause: Using QueuePool with async Azure SQL
+
+Solution: Switch to NullPool
+
+engine = create_async_engine(
+    connection_string,
+    poolclass=NullPool  # Required for Azure SQL async
+)
+Issue: JWT Token Expired
+Error: 401 Unauthorized
+
+Solution: Re-login to get new token
+
+curl -X POST http://localhost:8000/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"user@company.com","password":"secret"}'
+Migration Notes
+Key Differences from .NET Version
+Aspect	.NET Version	Python Version
+Framework	ASP.NET Core	FastAPI
+ORM	Entity Framework	SQLAlchemy
+Async	Task/async-await	asyncio/async-await
+DI	Built-in DI container	FastAPI Depends()
+Config	appsettings.json + IConfiguration	Pydantic Settings + .env
+Validation	FluentValidation	Pydantic models
+JSON	System.Text.Json	Pydantic + Python json
+Migration Challenges Solved
+Async Lazy-Loading: Implemented selectinload() for eager loading
+Python 3.14 Incompatibility: Downgraded to Python 3.12
+Dependency Conflicts: Resolved openai, opentelemetry version conflicts
+Connection Pooling: Switched to NullPool for Azure SQL async
+Email Validation: Added email-validator package for Pydantic
+VNet Access: Documented network restriction issue
+What Was Migrated
+✅ Completed:
+
+Project structure and architecture
+Database models (AgentUser, AgentConversation, AgentMessage, AgentMetric)
+API endpoints (auth, conversation CRUD, query)
+JWT authentication
+Service layer (User, Conversation, Message services)
+ChatService with Semantic Kernel integration
+Configuration management
+Error handling and logging
+Async database operations with eager loading
+⏳ Pending (requires Azure deployment):
+
+Full end-to-end AI testing (blocked by VNet)
+7 function plugins implementation
+Content safety integration
+Metrics tracking
+Unit/integration test coverage
+Performance Considerations
+Database Optimization
+Eager Loading: Use selectinload() to avoid N+1 queries
+Indexes: Ensure indexes on UserId, ConversationId, CreatedAt
+Pagination: Limit message history to last 10 (configurable)
+Connection Management: NullPool prevents connection leaks
+API Performance
+Async I/O: All database and HTTP operations are async
+Pydantic Validation: Fast C-based validation
+Uvicorn: High-performance ASGI server
+Caching: (TODO) Add Redis for conversation history
+AI Optimization
+Context Window: Limit to 10 messages (reduce token usage)
+Streaming: (TODO) Implement streaming responses for long answers
+Caching: (TODO) Cache tool responses for repeated queries
+Security
+Authentication & Authorization
+JWT Tokens: HS256 algorithm, 24-hour expiry
+Bearer Authentication: Standard Authorization header
+Password Hashing: (TODO) Implement bcrypt for production
+Data Protection
+SQL Injection: Protected by SQLAlchemy parameterization
+Input Validation: Pydantic enforces types, lengths, formats
+Environment Variables: Secrets in .env (not in repo)
+CORS: Configured allowed origins
+Content Safety
+Azure Content Safety: (TODO) Integrate for harmful content detection
+System Prompt: Clear guidelines for AI behavior
+Audit Trail: Full message history for compliance
+Monitoring & Observability
+Logging
+Structured Logs: JSON format with context
+Levels: INFO for operations, ERROR with stack traces
+SQL Logging: All queries logged in development
+Metrics (TODO)
+Token Usage: Track OpenAI API costs
+Response Times: Monitor AI latency
+Error Rates: Track failures by endpoint
+Database Performance: Query execution times
+Telemetry (TODO)
+Application Insights: Azure-native monitoring
+OpenTelemetry: Distributed tracing
+Health Checks: /health endpoint
+Contributing
+Code Style
+Formatting: Black (line length 100)
+Type Hints: Use throughout
+Docstrings: Google-style docstrings
+Naming: snake_case for functions, PascalCase for classes
+Pull Request Process
+Create feature branch
+Write tests for new functionality
+Ensure all tests pass
+Format code with Black
+Update documentation
+Submit PR with clear description
+License
+[Your License Here]
+
+Support
+For issues or questions:
+
+Email: support@company.com
+Slack: #semantic-kernel-api
+Documentation: [Internal Wiki Link]
+Last Updated: January 30, 2026 Version: 1.0.0 Author: Migration Team
