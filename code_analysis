@@ -1,0 +1,2669 @@
+# IN-DEPTH CODE ANALYSIS - STORAGE ASSESSMENT APPLICATION
+
+**Document Purpose:** Complete technical walkthrough for interview preparation  
+**Date:** January 21, 2026  
+**Coverage:** Full-stack application architecture, logic, and implementation details
+
+---
+
+## TABLE OF CONTENTS
+
+1. [System Architecture Overview](#1-system-architecture-overview)
+2. [Backend Deep Dive](#2-backend-deep-dive)
+3. [Database Architecture](#3-database-architecture)
+4. [Core Business Logic](#4-core-business-logic)
+5. [Frontend Architecture](#5-frontend-architecture)
+6. [Data Flow & Integration](#6-data-flow--integration)
+7. [Key Algorithms Explained](#7-key-algorithms-explained)
+8. [Design Patterns & Best Practices](#8-design-patterns--best-practices)
+9. [Interview Questions & Answers](#9-interview-questions--answers)
+
+---
+
+## 1. SYSTEM ARCHITECTURE OVERVIEW
+
+### 1.1 High-Level Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        USER BROWSER                              │
+│                   (React SPA on Port 3000)                       │
+└───────────────────────────┬─────────────────────────────────────┘
+                            │
+                            │ HTTP/REST API Calls
+                            │ (axios requests)
+                            ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                    FASTAPI BACKEND                               │
+│                    (Python on Port 8000)                         │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐          │
+│  │   Routes     │  │   Services   │  │   Models     │          │
+│  │  (REST API)  │─▶│  (Business)  │─▶│ (Database)   │          │
+│  └──────────────┘  └──────────────┘  └──────────────┘          │
+└───────────┬─────────────────────────────────┬───────────────────┘
+            │                                 │
+            │ Store Files                     │ SQL Queries
+            ▼                                 ▼
+┌─────────────────────┐          ┌─────────────────────────┐
+│  Azure Blob Storage │          │  Azure SQL Database     │
+│  (CSV/Script Files) │          │  (Metadata & Results)   │
+└─────────────────────┘          └─────────────────────────┘
+```
+
+### 1.2 Technology Stack Breakdown
+
+#### **Why FastAPI?**
+- **Async Support:** Native async/await for concurrent operations
+- **Auto Documentation:** Swagger UI auto-generated from code
+- **Type Validation:** Pydantic models ensure data integrity
+- **Performance:** One of the fastest Python frameworks (comparable to Node.js)
+- **Modern Python:** Uses Python 3.7+ type hints
+
+#### **Why React?**
+- **Component-Based:** Reusable UI components
+- **Virtual DOM:** Efficient rendering updates
+- **Ecosystem:** Rich library support (Chart.js, React Router)
+- **Single Page App:** No page reloads, smooth UX
+
+#### **Why Azure SQL?**
+- **Enterprise Grade:** ACID compliance, transactions
+- **Scalability:** Can handle millions of rows
+- **Integration:** Native Azure ecosystem integration
+- **Backup/Recovery:** Built-in disaster recovery
+
+#### **Why Azure Blob Storage?**
+- **Cost-Effective:** Cheap storage for large files
+- **Scalability:** Unlimited storage capacity
+- **Durability:** 99.999999999% (11 nines) durability
+- **Performance:** CDN integration for fast downloads
+
+---
+
+## 2. BACKEND DEEP DIVE
+
+### 2.1 Application Entry Point (main.py)
+
+```python
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+```
+
+**What:** Creates FastAPI application instance  
+**Why:** Entry point for all HTTP requests  
+**How:** 
+1. FastAPI() creates ASGI application
+2. Middleware processes requests before routes
+3. Routers define URL endpoints
+
+#### **CORS Middleware - Line by Line**
+
+```python
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],  # React dev server
+    allow_credentials=True,                   # Allow cookies/auth headers
+    allow_methods=["*"],                      # GET, POST, PUT, DELETE, etc.
+    allow_headers=["*"],                      # All HTTP headers allowed
+)
+```
+
+**What CORS Does:**
+- Prevents malicious websites from making requests to your API
+- Browser blocks requests from different origins (domains/ports)
+- CORS middleware tells browser "these origins are trusted"
+
+**Example Without CORS:**
+```
+Browser: "React app at localhost:3000 wants to call localhost:8000"
+Server: "No CORS headers found - BLOCKED!"
+React App: "Network error: CORS policy violation"
+```
+
+**Example With CORS:**
+```
+Browser: "React app at localhost:3000 wants to call localhost:8000"
+Server: "Access-Control-Allow-Origin: localhost:3000 - ALLOWED!"
+React App: "Success! Got data"
+```
+
+#### **Startup Event - Database Initialization**
+
+```python
+@app.on_event("startup")
+async def startup_event():
+    """Initialize database tables on startup"""
+    try:
+        from app.database import engine, Base
+        Base.metadata.create_all(bind=engine)
+        print("Database tables created successfully")
+    except Exception as e:
+        print(f"Warning: Could not connect to database: {e}")
+```
+
+**What:** Runs once when server starts  
+**Why:** Ensure database schema exists before accepting requests  
+**How:**
+1. Import SQLAlchemy engine (database connection)
+2. Import Base (parent class for all models)
+3. `create_all()` reads all model definitions and creates tables
+4. If tables exist, does nothing (idempotent operation)
+
+**SQLAlchemy Magic:**
+```python
+# When you define this model:
+class Project(Base):
+    __tablename__ = "tpsm_projects"
+    id = Column(Integer, primary_key=True)
+    project_name = Column(String(255))
+
+# create_all() generates this SQL:
+"""
+CREATE TABLE dbo.tpsm_projects (
+    id INT PRIMARY KEY IDENTITY(1,1),
+    project_name NVARCHAR(255)
+);
+"""
+```
+
+### 2.2 Configuration Management (config.py)
+
+#### **Settings Class - The Brain of Configuration**
+
+```python
+class Settings(BaseSettings):
+    DATABASE_URL: Optional[str] = None
+    DB_SERVER: Optional[str] = None
+    DB_DATABASE: Optional[str] = None
+    # ... more settings
+```
+
+**What:** Centralized configuration using Pydantic  
+**Why:** 
+- Type-safe configuration
+- Auto-loads from .env file
+- Validates settings on startup
+- Easy to test (mock settings)
+
+**How It Works:**
+```python
+# .env file contains:
+DB_SERVER=myserver.database.windows.net
+DB_DATABASE=StorageAssessmentDB
+DB_USERNAME=admin
+DB_PASSWORD=SecurePass123
+
+# Pydantic automatically:
+1. Reads .env file
+2. Validates types (str, int, bool)
+3. Creates Settings object
+4. Makes available via settings.DB_SERVER
+```
+
+#### **Database URL Property - Smart Connection String Builder**
+
+```python
+@property
+def database_url(self) -> str:
+    """Generate database URL based on authentication method"""
+```
+
+**What:** Dynamically builds connection string  
+**Why:** Support multiple database types (SQLite, SQL Server, Azure SQL)  
+**How:** Priority chain:
+
+```python
+# Priority 1: Full connection string provided
+if self.DATABASE_URL:
+    return self.DATABASE_URL
+    # Example: "mssql+pyodbc://user:pass@server/db?driver=..."
+
+# Priority 2: No server = Local development
+if not self.DB_SERVER:
+    return "sqlite:///./assessment.db"
+    # Creates local file database
+
+# Priority 3: Azure AD Authentication
+if self.USE_AZURE_AD_AUTH:
+    return "mssql+pyodbc://@server/db?Authentication=ActiveDirectoryInteractive"
+    # Uses your Azure login (no password needed)
+
+# Priority 4: SQL Authentication (username/password)
+if self.DB_USERNAME and self.DB_PASSWORD:
+    return "mssql+pyodbc://user:pass@server/db"
+    # Traditional SQL login
+
+# Priority 5: Fallback to SQLite
+return "sqlite:///./assessment.db"
+```
+
+**Connection String Anatomy:**
+```
+mssql+pyodbc://username:password@server:port/database?driver=ODBC+Driver+17+for+SQL+Server
+    │      │         │        │       │      │     │              │
+    │      │         │        │       │      │     │              └─ ODBC driver name
+    │      │         │        │       │      │     └─ Query parameters
+    │      │         │        │       │      └─ Database name
+    │      │         │        │       └─ Port (default 1433)
+    │      │         │        └─ Server hostname
+    │      │         └─ Password
+    │      └─ Username
+    └─ Dialect (SQL Server) + Driver (pyodbc library)
+```
+
+### 2.3 Database Layer (database.py)
+
+```python
+from sqlalchemy import create_engine
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
+```
+
+**Three Core Concepts:**
+
+#### **1. Engine - The Database Connection**
+
+```python
+engine = create_engine(
+    settings.database_url,
+    echo=True if settings.ENVIRONMENT == "development" else False
+)
+```
+
+**What:** Database connection pool manager  
+**Why:** Reuses connections instead of creating new ones (expensive)  
+**How:**
+
+```
+Application starts:
+    ↓
+create_engine() creates connection pool:
+    ┌─────────────────────────────┐
+    │  Connection Pool (20 conns) │
+    │  [C1][C2][C3]...[C20]      │
+    └─────────────────────────────┘
+    ↓
+Request 1 arrives:
+    - Borrows C1 from pool
+    - Executes query
+    - Returns C1 to pool
+    ↓
+Request 2 arrives:
+    - Borrows C2 from pool
+    - Executes query
+    - Returns C2 to pool
+
+Without Pool:
+    - Each request creates new connection (slow!)
+    - Database exhausts available connections
+    - Crashes under load
+```
+
+**echo=True Effect:**
+```python
+# Development mode (echo=True):
+>>> db.query(Project).all()
+SQL: SELECT * FROM dbo.tpsm_projects  # Printed to console
+[<Project id=1>, <Project id=2>]
+
+# Production mode (echo=False):
+>>> db.query(Project).all()
+[<Project id=1>, <Project id=2>]  # No SQL output
+```
+
+#### **2. SessionLocal - Transaction Manager**
+
+```python
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+```
+
+**What:** Factory that creates database sessions  
+**Why:** Each request needs isolated transaction  
+**How:**
+
+```python
+# autocommit=False means:
+db.add(project)      # Data in memory only
+db.add(response)     # Still in memory
+db.commit()          # NOW write to database (atomic)
+
+# If autocommit=True (bad!):
+db.add(project)      # Immediately writes to DB
+db.add(response)     # Immediately writes to DB
+# What if response fails? Project already saved! Inconsistent data!
+
+# autoflush=False means:
+db.add(project)           # Queued in memory
+project_id = project.id   # ERROR! Not in DB yet
+db.flush()                # Now writes to DB temporarily
+project_id = project.id   # Works! ID assigned
+db.commit()               # Makes it permanent
+```
+
+#### **3. Base - Model Definition Parent**
+
+```python
+Base = declarative_base()
+```
+
+**What:** Parent class for all database models  
+**Why:** Tracks model definitions for schema creation  
+**How:**
+
+```python
+# When you define:
+class Project(Base):
+    __tablename__ = "tpsm_projects"
+    id = Column(Integer, primary_key=True)
+
+# Behind the scenes:
+Base.metadata.tables["tpsm_projects"] = <Table definition>
+
+# When create_all() is called:
+for table_name, table_def in Base.metadata.tables.items():
+    execute_sql(table_def.create_statement())
+```
+
+#### **Dependency Injection - get_db()**
+
+```python
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+```
+
+**What:** Context manager for database sessions  
+**Why:** Ensures session is always closed (prevent memory leaks)  
+**How:**
+
+```python
+# In route:
+@router.get("/projects")
+def get_projects(db: Session = Depends(get_db)):
+    # FastAPI magic:
+    # 1. Calls get_db()
+    # 2. Creates session
+    # 3. Passes to db parameter
+    projects = db.query(Project).all()
+    return projects
+    # 4. After return, FastAPI calls finally block
+    # 5. Session closed automatically
+
+# Without Depends():
+@router.get("/projects")
+def get_projects():
+    db = SessionLocal()
+    projects = db.query(Project).all()
+    # Oops! Forgot to close()
+    # Session leaks, eventually runs out of connections
+```
+
+**Lifecycle Diagram:**
+```
+Request arrives
+    ↓
+FastAPI calls get_db()
+    ↓
+SessionLocal() creates new session
+    ↓
+yield db (session passed to route function)
+    ↓
+Route executes (queries, commits, etc.)
+    ↓
+Route returns response
+    ↓
+finally block executes
+    ↓
+db.close() releases connection back to pool
+    ↓
+Response sent to client
+```
+
+### 2.4 Models Layer (models.py)
+
+#### **Project Model - The Core Entity**
+
+```python
+class Project(Base):
+    __tablename__ = "tpsm_projects"
+    __table_args__ = {'schema': 'dbo'}
+    
+    id = Column(Integer, primary_key=True, index=True)
+    project_name = Column(String(255), nullable=False)
+    environment = Column(String(50), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    # Relationships
+    responses = relationship("Response", back_populates="project", cascade="all, delete-orphan")
+```
+
+**Line-by-Line Explanation:**
+
+**`__tablename__ = "tpsm_projects"`**
+- Maps Python class to database table name
+- SQLAlchemy will look for table named "tpsm_projects"
+
+**`__table_args__ = {'schema': 'dbo'}`**
+- Sets database schema (namespace for tables)
+- Full table name becomes: `dbo.tpsm_projects`
+- In SQL Server: schemas organize tables (like folders for files)
+
+**`id = Column(Integer, primary_key=True, index=True)`**
+- **Column:** Declares a table column
+- **Integer:** Data type (maps to SQL INT)
+- **primary_key=True:** Unique identifier for each row
+  - Auto-incrementing (IDENTITY in SQL Server)
+  - Never null
+  - Indexed automatically
+- **index=True:** Creates separate index for faster lookups
+
+**`project_name = Column(String(255), nullable=False)`**
+- **String(255):** Maps to NVARCHAR(255) in SQL Server
+- **nullable=False:** SQL NOT NULL constraint
+  - Database rejects INSERT/UPDATE without this field
+
+**`created_at = Column(DateTime(timezone=True), server_default=func.now())`**
+- **DateTime(timezone=True):** Stores timestamp with timezone info
+  - Maps to DATETIME2 in SQL Server
+  - Prevents timezone confusion
+- **server_default=func.now():** Database sets timestamp automatically
+  - Uses database's GETDATE() function
+  - Even if Python doesn't provide value, database fills it in
+
+**Relationships - The Magic of ORM**
+
+```python
+responses = relationship("Response", back_populates="project", cascade="all, delete-orphan")
+```
+
+**What:** Creates Python object navigation  
+**Why:** Access related data without writing SQL  
+**How:**
+
+```python
+# Without relationship:
+project = db.query(Project).filter(Project.id == 1).first()
+responses = db.query(Response).filter(Response.project_id == project.id).all()
+
+# With relationship:
+project = db.query(Project).filter(Project.id == 1).first()
+responses = project.responses  # Automatic SQL JOIN!
+
+# SQLAlchemy generates:
+# SELECT * FROM tpsm_responses WHERE project_id = 1
+```
+
+**Cascade Options:**
+
+```python
+cascade="all, delete-orphan"
+```
+
+**What Happens:**
+
+```python
+# Scenario 1: Delete project
+project = db.query(Project).get(1)
+db.delete(project)
+db.commit()
+# Automatically deletes ALL responses for this project!
+# No orphaned responses left behind
+
+# Scenario 2: Remove response from project
+project.responses.remove(some_response)
+db.commit()
+# Response is deleted from database (orphan removal)
+
+# Without cascade:
+db.delete(project)
+# ERROR! Foreign key constraint violation
+# Must manually delete all responses first
+```
+
+**back_populates - Bidirectional Relationship:**
+
+```python
+# In Project model:
+responses = relationship("Response", back_populates="project")
+
+# In Response model:
+project = relationship("Project", back_populates="responses")
+
+# Usage:
+project = db.query(Project).get(1)
+response = project.responses[0]
+response.project  # Goes back to parent project!
+```
+
+#### **FileMetadata Model - Large-Scale Data**
+
+```python
+class FileMetadata(Base):
+    __tablename__ = "tpsm_file_metadata"
+    
+    id = Column(BigInteger, primary_key=True, index=True)
+    size_bytes = Column(BigInteger, nullable=True)
+    size_mb = Column(Numeric(18, 2), nullable=True)
+    created_date = Column(DateTime(timezone=True), nullable=True)
+```
+
+**Why BigInteger for ID?**
+```python
+Integer:     Max ~2.1 billion rows
+BigInteger:  Max ~9.2 quintillion rows (9,223,372,036,854,775,807)
+
+# Real-world scenario:
+# Scanning 1000 servers * 1 million files each = 1 billion rows
+# Integer would overflow!
+```
+
+**Why Numeric(18, 2) for Decimals?**
+```python
+Numeric(18, 2):
+    │      │
+    │      └─ 2 decimal places
+    └─ 18 total digits
+
+Examples:
+1234567890123456.78  ✅ Valid (16 digits + 2 decimals = 18)
+123.45               ✅ Valid
+0.99                 ✅ Valid
+1234567890123456.789 ❌ Invalid (19 digits total)
+
+# Why not Float?
+Float:  123.456 might become 123.45600000001 (imprecise!)
+Numeric: 123.456 is EXACTLY 123.456 (financial accuracy)
+```
+
+### 2.5 Schemas Layer (schemas.py) - Pydantic Models
+
+```python
+from pydantic import BaseModel
+
+class ProjectCreate(BaseModel):
+    project_name: str
+    environment: str
+    business_purpose: str
+```
+
+**What:** Data validation and serialization  
+**Why:** Separate API contracts from database models  
+**How:**
+
+#### **The Three-Layer Pattern:**
+
+```
+1. INCOMING REQUEST (JSON)
+        ↓
+2. Pydantic Schema (Validation)
+        ↓
+3. SQLAlchemy Model (Database)
+```
+
+**Example Flow:**
+
+```python
+# 1. Client sends JSON:
+{
+    "project_name": "Migration Project",
+    "environment": "Production",
+    "business_purpose": "Migrate to cloud"
+}
+
+# 2. FastAPI validates with Pydantic:
+@router.post("/projects", response_model=ProjectResponse)
+def create_project(project: ProjectCreate, db: Session = Depends(get_db)):
+    # project is validated ProjectCreate instance
+    # If JSON missing fields or wrong types, automatic 422 error
+    
+    # 3. Convert to SQLAlchemy model:
+    db_project = Project(**project.model_dump())
+    #                    └─ Converts Pydantic to dict
+    
+    # 4. Save to database:
+    db.add(db_project)
+    db.commit()
+    
+    # 5. Return validated response:
+    return db_project  # Converted to ProjectResponse automatically
+```
+
+**Why Separation?**
+
+```python
+# Scenario: API evolution
+# Version 1: Client sends all fields
+class ProjectCreate(BaseModel):
+    project_name: str
+    environment: str
+
+# Version 2: Add new field (backward compatible)
+class ProjectCreate(BaseModel):
+    project_name: str
+    environment: str
+    tags: List[str] = []  # Default value = no breaking change
+
+# Database model stays the same!
+# API schema adapts without database migration
+```
+
+**Config Class - from_attributes:**
+
+```python
+class ProjectResponse(ProjectBase):
+    id: int
+    created_at: datetime
+    
+    class Config:
+        from_attributes = True
+```
+
+**What from_attributes Does:**
+
+```python
+# SQLAlchemy model (object attributes):
+project = Project(id=1, project_name="Test")
+
+# Without from_attributes:
+ProjectResponse(**project)  # ERROR! Expects dict, got object
+
+# With from_attributes:
+ProjectResponse.from_orm(project)  # ✅ Works!
+# or automatic conversion by FastAPI:
+return project  # FastAPI converts using from_attributes
+```
+
+---
+
+## 3. DATABASE ARCHITECTURE
+
+### 3.1 Schema Design Philosophy
+
+**Normalized Design - No Data Duplication:**
+
+```sql
+-- GOOD (Normalized):
+tpsm_projects:          tpsm_responses:
++----+-------------+    +----+------------+-------------+
+| id | name        |    | id | project_id | question_id |
++----+-------------+    +----+------------+-------------+
+| 1  | Project A   |    | 1  | 1          | Q1          |
+| 2  | Project B   |    | 2  | 1          | Q2          |
++----+-------------+    | 3  | 2          | Q1          |
+                        +----+------------+-------------+
+
+-- BAD (Denormalized):
+tpsm_responses_bad:
++----+-------------+-------------+
+| id | project_name| question_id |
++----+-------------+-------------+
+| 1  | Project A   | Q1          |  ← Name repeated
+| 2  | Project A   | Q2          |  ← Name repeated
+| 3  | Project B   | Q1          |
++----+-------------+-------------+
+
+Problem: If "Project A" renamed to "Project X":
+- Normalized: Update 1 row in projects table
+- Denormalized: Update 100s of rows in responses table
+```
+
+### 3.2 Table Relationships
+
+```
+tpsm_projects (1) ────────── (Many) tpsm_responses
+      │                              
+      │ (1)
+      │
+      ├────────── (Many) tpsm_script_results
+      │                       │
+      │                       │ (1)
+      │                       │
+      │                       └─── (Many) tpsm_file_metadata
+      │
+      ├────────── (1) tpsm_analysis_summary
+      │
+      └────────── (1) tpsm_analysis_results
+```
+
+**Foreign Key Constraints:**
+
+```sql
+ALTER TABLE tpsm_responses
+ADD CONSTRAINT FK_responses_project
+FOREIGN KEY (project_id) REFERENCES tpsm_projects(id)
+ON DELETE CASCADE;
+```
+
+**What CASCADE Does:**
+
+```sql
+-- Project has 3 responses:
+tpsm_projects:              tpsm_responses:
++----+------+               +----+------------+
+| id | name |               | id | project_id |
++----+------+               +----+------------+
+| 1  | Proj |               | 1  | 1          |
++----+------+               | 2  | 1          |
+                            | 3  | 1          |
+                            +----+------------+
+
+-- Delete project:
+DELETE FROM tpsm_projects WHERE id = 1;
+
+-- With CASCADE:
+Result: All 3 responses auto-deleted ✅
+
+-- Without CASCADE:
+ERROR: Foreign key constraint violation ❌
+(Must manually delete responses first)
+```
+
+### 3.3 Index Strategy
+
+```sql
+-- Primary Key Index (automatic):
+CREATE UNIQUE INDEX PK_projects ON tpsm_projects(id);
+
+-- Foreign Key Index (manual):
+CREATE INDEX IX_responses_project ON tpsm_responses(project_id);
+
+-- Composite Index (query optimization):
+CREATE INDEX IX_metadata_project_date 
+ON tpsm_file_metadata(project_id, modified_date);
+```
+
+**Why Indexes Matter:**
+
+```sql
+-- Without index:
+SELECT * FROM tpsm_file_metadata WHERE project_id = 1;
+-- Scans ALL 1,000,000 rows (Full Table Scan)
+-- Time: 30 seconds
+
+-- With index:
+-- Uses B-Tree index to jump directly to matching rows
+-- Reads only 10,000 rows for project_id = 1
+-- Time: 0.5 seconds
+```
+
+**Index Trade-off:**
+
+```
+Pros:
++ Faster SELECT queries (10-1000x speedup)
++ Faster WHERE, JOIN, ORDER BY
+
+Cons:
+- Slower INSERT (must update index)
+- Slower UPDATE (must update index if indexed column changes)
+- More storage space (index stored separately)
+
+Rule of Thumb:
+- Index columns in WHERE clauses
+- Index foreign keys
+- Index columns in JOIN conditions
+- Don't index low-cardinality columns (e.g., boolean)
+```
+
+### 3.4 JSON Storage for Analysis Results
+
+```python
+class AnalysisResults(Base):
+    age_distribution = Column(String, nullable=True)  # JSON stored as text
+    file_types = Column(String, nullable=True)        # JSON stored as text
+```
+
+**Why JSON in Database?**
+
+```python
+# Schema flexibility:
+# Without JSON (rigid schema):
+CREATE TABLE age_buckets (
+    id INT,
+    bucket_name VARCHAR(50),
+    file_count INT,
+    size_gb DECIMAL
+);
+# Problem: Adding new fields requires schema migration
+
+# With JSON (flexible):
+age_distribution = json.dumps([
+    {"bucket": "<6m", "count": 100, "size_gb": 50.5, "percentage": 10},
+    {"bucket": "6m-1Y", "count": 200, "size_gb": 80.2, "percentage": 20}
+])
+# Adding new fields: Just update Python code, no migration!
+
+# Storage:
+INSERT INTO tpsm_analysis_results (age_distribution) 
+VALUES ('[{"bucket":"<6m","count":100}]');
+
+# Retrieval:
+result = db.query(AnalysisResults).first()
+data = json.loads(result.age_distribution)
+# [{"bucket": "<6m", "count": 100}]
+```
+
+**Trade-offs:**
+
+```
+Pros:
++ Schema flexibility
++ Easier versioning
++ Nested data structures
+
+Cons:
+- Can't query inside JSON easily
+- No type validation at DB level
+- Larger storage (text vs binary)
+```
+
+---
+
+## 4. CORE BUSINESS LOGIC
+
+### 4.1 Storage Analyzer Service - The Brain
+
+#### **analyze_project() - Master Orchestrator**
+
+```python
+async def analyze_project(self, project_id: int) -> Dict:
+    # 1. Update status to processing
+    summary = self._get_or_create_summary(project_id)
+    summary.analysis_status = "processing"
+    self.db.commit()
+    
+    # 2. Get CSV files
+    csv_files = self.db.query(ScriptResult).filter(...)
+    
+    # 3. Parse CSV files into FileMetadata table
+    for csv_file in csv_files:
+        await self._parse_csv_file(csv_file, project_id)
+    
+    # 4. Run all analyses
+    analysis_data['age_distribution'] = self._analyze_age_distribution(project_id)
+    analysis_data['file_types'] = self._analyze_file_types(project_id)
+    analysis_data['storage_tiers'] = self._analyze_storage_tiers(project_id)
+    # ... more analyses
+    
+    # 5. Save results
+    self._save_analysis_results(project_id, analysis_data)
+    
+    # 6. Update summary
+    summary.analysis_status = "completed"
+    self.db.commit()
+```
+
+**Why This Design?**
+
+```
+State Machine Pattern:
+    not_started → processing → completed
+                           ↓
+                         failed
+
+Prevents:
+- Running same analysis twice concurrently
+- Zombie analyses (stuck in processing)
+- Inconsistent state (no results but status = completed)
+```
+
+#### **_parse_csv_file() - Bulk Data Loading**
+
+```python
+async def _parse_csv_file(self, csv_file: ScriptResult, project_id: int) -> int:
+    blob_content = await self._download_blob(csv_file.blob_url)
+    csv_text = blob_content.decode('utf-8-sig')  # Handle BOM
+    reader = csv.DictReader(io.StringIO(csv_text))
+    
+    batch = []
+    batch_size = 1000
+    
+    for row in reader:
+        metadata = FileMetadata(...)
+        batch.append(metadata)
+        
+        if len(batch) >= batch_size:
+            self.db.bulk_save_objects(batch)
+            self.db.commit()
+            batch = []
+```
+
+**Performance Optimization:**
+
+```python
+# BAD: One-by-one inserts
+for row in reader:
+    metadata = FileMetadata(...)
+    db.add(metadata)
+    db.commit()  # 1000 commits for 1000 rows = SLOW!
+
+# GOOD: Batch inserts
+batch = []
+for row in reader:
+    batch.append(FileMetadata(...))
+    if len(batch) >= 1000:
+        db.bulk_save_objects(batch)
+        db.commit()  # 1 commit for 1000 rows = FAST!
+
+# Benchmark:
+# 100,000 rows:
+# One-by-one: 300 seconds
+# Batch (1000): 15 seconds
+# 20x faster!
+```
+
+**Why decode('utf-8-sig')?**
+
+```python
+# CSV files from Excel often have BOM (Byte Order Mark):
+# File bytes: EF BB BF 53 65 72 76 65 72 ...
+#             └──BOM──┘ └─"Server"─┘
+
+# Without 'utf-8-sig':
+text = blob_content.decode('utf-8')
+# text = "\ufeffServerName,Drive,..."  # ← BOM character in string!
+
+# With 'utf-8-sig':
+text = blob_content.decode('utf-8-sig')
+# text = "ServerName,Drive,..."  # ✅ BOM removed
+```
+
+#### **Age Distribution Analysis - Bucketing Algorithm**
+
+```python
+def _analyze_age_distribution(self, project_id: int) -> List[Dict]:
+    buckets = {
+        '<6m': (0, 180),
+        '6m-1Y': (180, 365),
+        '1-3Y': (365, 1095),
+        '3-5Y': (1095, 1825),
+        '>5Y': (1825, 36500)
+    }
+    
+    for bucket_name, (min_days, max_days) in buckets.items():
+        min_date = now - timedelta(days=max_days)
+        max_date = now - timedelta(days=min_days)
+        
+        result = db.query(
+            func.count(FileMetadata.id),
+            func.sum(FileMetadata.size_gb)
+        ).filter(
+            FileMetadata.modified_date >= min_date,
+            FileMetadata.modified_date < max_date
+        ).first()
+```
+
+**Visual Explanation:**
+
+```
+Today: Jan 21, 2026
+
+Bucket: <6m (files modified in last 6 months)
+    min_days = 0, max_days = 180
+    min_date = Jan 21, 2026 - 180 days = Jul 24, 2025
+    max_date = Jan 21, 2026 - 0 days = Jan 21, 2026
+    
+    SQL WHERE:
+        modified_date >= '2025-07-24'
+        AND modified_date < '2026-01-21'
+    
+    Timeline:
+    ────────────────────────────────────────────────►
+    Jul 24, 2025          Today (Jan 21, 2026)
+         │                      │
+         └──── <6m bucket ──────┘
+
+Bucket: 6m-1Y
+    min_days = 180, max_days = 365
+    min_date = Jan 21, 2026 - 365 days = Jan 21, 2025
+    max_date = Jan 21, 2026 - 180 days = Jul 24, 2025
+    
+    Timeline:
+    ────────────────────────────────────────────────►
+    Jan 21, 2025        Jul 24, 2025
+         │                    │
+         └─── 6m-1Y bucket ───┘
+```
+
+**Why Decimal for Financial Calculations?**
+
+```python
+from decimal import Decimal
+
+# Float precision errors:
+0.1 + 0.2 = 0.30000000000000004  # ❌ Wrong!
+
+# Decimal precision:
+Decimal('0.1') + Decimal('0.2') = Decimal('0.3')  # ✅ Exact!
+
+# Real-world impact:
+# Calculate cost for 1000 files at $0.0184/GB:
+float_cost = 1000 * 0.0184         # 18.400000000000002
+decimal_cost = 1000 * Decimal('0.0184')  # 18.40
+
+# Over millions of calculations:
+# Float: Rounding errors accumulate
+# Decimal: Always exact
+```
+
+#### **Storage Tier Analysis - Multi-Factor Decision Logic**
+
+```python
+def _analyze_storage_tiers(self, project_id: int) -> List[Dict]:
+    # Hot tier: Modified OR accessed in last 30 days
+    hot_query = db.query(...).filter(
+        or_(
+            FileMetadata.modified_date >= now - timedelta(days=30),
+            FileMetadata.accessed_date >= now - timedelta(days=30)
+        )
+    )
+    
+    # Cool tier: 30-180 days, excluding Hot
+    cool_query = db.query(...).filter(
+        or_(
+            and_(
+                modified_date >= now - timedelta(days=180),
+                modified_date < now - timedelta(days=30)
+            ),
+            and_(
+                accessed_date >= now - timedelta(days=180),
+                accessed_date < now - timedelta(days=30)
+            )
+        ),
+        not_(or_(  # Exclude Hot tier files
+            modified_date >= now - timedelta(days=30),
+            accessed_date >= now - timedelta(days=30)
+        ))
+    )
+```
+
+**Decision Tree:**
+
+```
+File: example.txt
+    └─ Modified: 2026-01-15 (6 days ago)
+    └─ Accessed: 2025-06-01 (234 days ago)
+
+Check Hot tier:
+    Modified in last 30 days? YES (6 < 30)
+    Accessed in last 30 days? NO
+    Result: or() = TRUE → HOT TIER ✅
+
+File: old_backup.zip
+    └─ Modified: 2023-01-01 (1116 days ago)
+    └─ Accessed: 2023-01-01 (1116 days ago)
+
+Check Hot tier:
+    Modified in last 30 days? NO
+    Accessed in last 30 days? NO
+    Result: or() = FALSE
+
+Check Cool tier:
+    Modified 30-180 days ago? NO (1116 > 180)
+    Result: FALSE
+
+Check Archive tier:
+    Modified 180-1095 days ago? NO (1116 > 1095)
+    Result: FALSE
+
+Check Delete candidates:
+    Modified > 3 years ago? YES (1116 > 1095)
+    Accessed > 2 years ago? YES (1116 > 730)
+    Matches temp pattern? Check filename...
+        Contains "backup"? YES
+    Result: DELETE CANDIDATE ✅
+```
+
+**Safety Logic for Delete Tier:**
+
+```python
+# Multiple conditions required (AND logic):
+delete_candidates = db.query(...).filter(
+    FileMetadata.modified_date < now - timedelta(days=1095),  # > 3 years
+    or_(
+        FileMetadata.accessed_date < now - timedelta(days=730),  # > 2 years
+        FileMetadata.accessed_date.is_(None)
+    ),
+    or_(  # Filename patterns
+        func.lower(file_name).like('%temp%'),
+        func.lower(file_name).like('%backup%'),
+        func.lower(file_name).like('%old%'),
+        func.lower(directory_path).like('%temp%'),
+        func.lower(directory_path).like('%cache%')
+    )
+)
+```
+
+**Why Conservative Approach?**
+
+```
+Aggressive (dangerous):
+    Delete anything > 1 year old
+    Risk: Delete important archival data
+
+Conservative (safe):
+    Delete only if:
+    - Very old (> 3 years)
+    - Not accessed recently (> 2 years)
+    - Matches suspicious patterns (temp, backup, cache)
+    Risk: Minimal false positives
+    
+Real-world example:
+    File: "CompanyContract_2020.pdf"
+    - Modified: 4 years ago
+    - Accessed: 3 years ago
+    - Pattern: None
+    Result: NOT deleted (legal/compliance risk!)
+    
+    File: "temp_backup_2020.tmp"
+    - Modified: 4 years ago
+    - Accessed: 3 years ago
+    - Pattern: temp + backup
+    Result: DELETE candidate ✅
+```
+
+#### **Duplicate Detection Algorithm**
+
+```python
+def _analyze_duplicates(self, project_id: int) -> Dict:
+    duplicate_groups = db.query(
+        FileMetadata.extension,
+        FileMetadata.size_gb,
+        FileMetadata.file_name,
+        func.count(FileMetadata.id).label('occurrence_count'),
+        func.sum(FileMetadata.size_gb).label('total_size_gb')
+    ).filter(
+        FileMetadata.project_id == project_id,
+        FileMetadata.size_gb > 0
+    ).group_by(
+        FileMetadata.extension,
+        FileMetadata.size_gb,
+        FileMetadata.file_name
+    ).having(
+        func.count(FileMetadata.id) > 1
+    ).all()
+```
+
+**SQL Translation:**
+
+```sql
+SELECT 
+    extension,
+    size_gb,
+    file_name,
+    COUNT(id) as occurrence_count,
+    SUM(size_gb) as total_size_gb
+FROM tpsm_file_metadata
+WHERE project_id = 1
+  AND size_gb > 0
+GROUP BY extension, size_gb, file_name
+HAVING COUNT(id) > 1
+ORDER BY SUM(size_gb) DESC;
+```
+
+**Example Results:**
+
+```
+Input data:
++----+-----------+--------+---------+
+| id | file_name | size_gb| extension|
++----+-----------+--------+---------+
+| 1  | report.pdf| 2.5    | .pdf    |
+| 2  | report.pdf| 2.5    | .pdf    |
+| 3  | report.pdf| 2.5    | .pdf    |
+| 4  | data.xlsx | 1.0    | .xlsx   |
+| 5  | data.xlsx | 1.0    | .xlsx   |
++----+-----------+--------+---------+
+
+GROUP BY results:
++-----------+--------+-----------+----------------+
+| file_name | size_gb| extension | occurrence_count|
++-----------+--------+-----------+----------------+
+| report.pdf| 2.5    | .pdf      | 3              |
+| data.xlsx | 1.0    | .xlsx     | 2              |
++-----------+--------+-----------+----------------+
+
+Savings calculation:
+report.pdf: 2.5 GB * (3-1) = 5.0 GB saved (keep 1, delete 2)
+data.xlsx:  1.0 GB * (2-1) = 1.0 GB saved (keep 1, delete 1)
+Total savings: 6.0 GB
+```
+
+**Limitations:**
+
+```python
+# This algorithm finds files with:
+# - Same name
+# - Same size
+# - Same extension
+
+# FALSE POSITIVES:
+# File 1: report_v1.pdf (content: "Draft report")
+# File 2: report_v1.pdf (content: "Final report")
+# Same name, same size → Marked as duplicate
+# But DIFFERENT content!
+
+# Solution: Use file hashing (Phase 2)
+import hashlib
+hash1 = hashlib.md5(file1_content).hexdigest()
+hash2 = hashlib.md5(file2_content).hexdigest()
+if hash1 == hash2:
+    # TRUE duplicate (identical content)
+```
+
+### 4.2 Blob Storage Integration
+
+```python
+class BlobStorageService:
+    def __init__(self):
+        self.blob_service_client = BlobServiceClient.from_connection_string(
+            settings.AZURE_STORAGE_CONNECTION_STRING,
+            connection_verify=False  # DANGER: Production should be True!
+        )
+```
+
+**Connection String Anatomy:**
+
+```
+DefaultEndpointsProtocol=https;
+AccountName=mystorageaccount;
+AccountKey=ABC123...==;
+EndpointSuffix=core.windows.net
+
+Components:
+1. Protocol: https (secure) or http
+2. AccountName: Azure storage account name
+3. AccountKey: Secret key for authentication
+4. EndpointSuffix: Azure region endpoint
+```
+
+**File Upload Flow:**
+
+```python
+async def upload_file(self, file_content: bytes, file_name: str, blob_path: str) -> str:
+    # 1. Get blob client (pointer to file location)
+    blob_client = self.blob_service_client.get_blob_client(
+        container=self.container_name,
+        blob=blob_path
+    )
+    
+    # 2. Upload bytes to Azure
+    blob_client.upload_blob(file_content, overwrite=True)
+    
+    # 3. Return public URL
+    return blob_client.url
+```
+
+**What Happens Behind the Scenes:**
+
+```
+Step 1: Client uploads file to FastAPI
+    POST /api/results/upload-results/1
+    Body: multipart/form-data with file
+
+Step 2: FastAPI reads file into memory
+    file_content = await file.read()
+    # Entire file loaded into RAM
+
+Step 3: Upload to Azure Blob Storage
+    Azure SDK:
+    - Splits file into 4MB blocks
+    - Uploads blocks in parallel
+    - Commits blocks as single blob
+    
+    Storage structure:
+    container: assessment-uploads
+        └─ results/
+            └─ project_1/
+                └─ server1_data.csv
+
+Step 4: Get public URL
+    https://mystorageaccount.blob.core.windows.net/
+    assessment-uploads/results/project_1/server1_data.csv
+    
+Step 5: Save URL to database
+    ScriptResult.blob_url = "https://..."
+```
+
+**Container vs Blob:**
+
+```
+Azure Storage Account: mystorageaccount
+    ├─ Container: assessment-uploads (like a folder)
+    │   ├─ Blob: results/project_1/file1.csv
+    │   ├─ Blob: results/project_1/file2.csv
+    │   └─ Blob: results/project_2/file1.csv
+    │
+    └─ Container: backups
+        └─ Blob: backup_2026.zip
+
+Analogy:
+    Storage Account = Hard Drive
+    Container = Folder
+    Blob = File
+```
+
+---
+
+## 5. FRONTEND ARCHITECTURE
+
+### 5.1 React Application Structure
+
+```javascript
+import React from 'react';
+import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+```
+
+**Component Hierarchy:**
+
+```
+App.js (Root)
+    │
+    ├─ Router (URL management)
+    │   │
+    │   ├─ Route: / → AssessmentForm
+    │   │   │
+    │   │   ├─ BasicInfoForm
+    │   │   ├─ QuestionsForm
+    │   │   └─ ResultsUpload
+    │   │
+    │   ├─ Route: /projects → ProjectsList
+    │   │
+    │   └─ Route: /analysis/:projectId → AnalysisDashboard
+    │       │
+    │       ├─ Chart.js components (Pie, Bar, Line)
+    │       └─ Data tables
+```
+
+### 5.2 State Management - useState Hook
+
+```javascript
+const [currentStep, setCurrentStep] = useState(1);
+const [projectData, setProjectData] = useState(null);
+const [responses, setResponses] = useState({});
+```
+
+**What useState Does:**
+
+```javascript
+// Component renders for first time:
+const [count, setCount] = useState(0);
+//      │        │              └─ Initial value
+//      │        └─ Function to update state
+//      └─ Current state value
+
+// When you call setCount:
+setCount(1);
+// React:
+// 1. Updates count to 1
+// 2. Re-renders component
+// 3. UI updates automatically
+
+// Example:
+function Counter() {
+    const [count, setCount] = useState(0);
+    
+    return (
+        <div>
+            <p>Count: {count}</p>
+            <button onClick={() => setCount(count + 1)}>
+                Increment
+            </button>
+        </div>
+    );
+}
+
+// Click flow:
+// User clicks button
+//     ↓
+// onClick fires
+//     ↓
+// setCount(count + 1) called
+//     ↓
+// React updates count: 0 → 1
+//     ↓
+// Component re-renders
+//     ↓
+// UI shows "Count: 1"
+```
+
+**State vs Props:**
+
+```javascript
+// State: Data owned by component
+function Parent() {
+    const [data, setData] = useState("Hello");  // State
+    return <Child message={data} />;            // Passed as prop
+}
+
+// Props: Data received from parent
+function Child({ message }) {  // Prop
+    return <p>{message}</p>;
+    // Can't modify message directly!
+}
+
+Rule:
+- State: Internal data, can change
+- Props: External data, read-only
+```
+
+### 5.3 API Integration - axios
+
+```javascript
+export const getAnalysisResults = async (projectId) => {
+    const response = await api.get(`/analysis/results/${projectId}`);
+    return response.data;
+};
+```
+
+**Async/Await Explained:**
+
+```javascript
+// Without async/await (callback hell):
+function getData() {
+    api.get('/projects')
+        .then(response => {
+            api.get(`/projects/${response.data[0].id}/responses`)
+                .then(responses => {
+                    api.get(`/analysis/${response.data[0].id}`)
+                        .then(analysis => {
+                            // Finally got all data!
+                        });
+                });
+        });
+}
+
+// With async/await (clean):
+async function getData() {
+    const projects = await api.get('/projects');
+    const responses = await api.get(`/projects/${projects.data[0].id}/responses`);
+    const analysis = await api.get(`/analysis/${projects.data[0].id}`);
+    // All data available here!
+}
+```
+
+**Error Handling:**
+
+```javascript
+try {
+    const response = await api.get('/projects');
+    setProjects(response.data);
+} catch (err) {
+    if (err.response) {
+        // Server responded with error status
+        console.error('Server error:', err.response.status);
+        setError(`Error ${err.response.status}: ${err.response.data.detail}`);
+    } else if (err.request) {
+        // Request sent but no response
+        console.error('Network error:', err.request);
+        setError('Network error: Server not responding');
+    } else {
+        // Something else went wrong
+        console.error('Error:', err.message);
+        setError('Unexpected error occurred');
+    }
+}
+```
+
+### 5.4 Chart.js Integration
+
+```javascript
+import { Pie, Bar, Line } from 'react-chartjs-2';
+
+const getAgeDistributionChart = () => {
+    return {
+        labels: ['<6m', '6m-1Y', '1-3Y', '3-5Y', '>5Y'],
+        datasets: [{
+            label: 'Storage Size (GB)',
+            data: [50, 80, 120, 90, 60],
+            backgroundColor: ['#4caf50', '#8bc34a', '#ffc107', '#ff9800', '#f44336']
+        }]
+    };
+};
+
+<Pie data={getAgeDistributionChart()} />
+```
+
+**Chart Data Flow:**
+
+```
+1. Backend returns JSON:
+{
+    "age_distribution": [
+        {"age_bucket": "<6m", "total_size_gb": 50},
+        {"age_bucket": "6m-1Y", "total_size_gb": 80}
+    ]
+}
+
+2. Frontend transforms to Chart.js format:
+{
+    labels: ["<6m", "6m-1Y"],
+    datasets: [{
+        data: [50, 80]
+    }]
+}
+
+3. Chart.js renders:
+    ┌─────────────────┐
+    │  50%      50%   │
+    │   🟢      🟢    │
+    │  <6m    6m-1Y   │
+    └─────────────────┘
+```
+
+---
+
+## 6. DATA FLOW & INTEGRATION
+
+### 6.1 Complete User Journey
+
+**Scenario: User creates new assessment**
+
+```
+Step 1: User fills basic info form
+    Frontend: BasicInfoForm.js
+        ↓
+    State: setProjectData({name: "...", environment: "..."})
+
+Step 2: User answers questions
+    Frontend: QuestionsForm.js
+        ↓
+    State: setResponses({Q1: {value: "Yes", comments: "..."}})
+
+Step 3: User clicks Submit
+    Frontend: AssessmentForm.js
+        ↓
+    API Call: POST /api/assessments/complete
+        {
+            project: {...},
+            responses: [...]
+        }
+        ↓
+    Backend: project_routes.py → create_complete_assessment()
+        ↓
+    Database Transaction:
+        1. INSERT INTO tpsm_projects (...)
+        2. INSERT INTO tpsm_responses (...)
+        3. COMMIT
+        ↓
+    Response: {project_id: 1, responses_count: 10}
+        ↓
+    Frontend: Redirect to results upload
+
+Step 4: User uploads CSV files
+    Frontend: ResultsUpload.js
+        ↓
+    API Call: POST /api/results/upload-results/1
+        FormData: [file1.csv, file2.csv]
+        ↓
+    Backend: result_upload_routes.py
+        ↓
+    For each file:
+        1. Read file bytes
+        2. Upload to Azure Blob Storage
+        3. INSERT INTO tpsm_script_results (blob_url, ...)
+        ↓
+    Response: {files: [...]}
+
+Step 5: User triggers analysis
+    Frontend: AnalysisDashboard.js
+        ↓
+    API Call: POST /api/analysis/trigger/1
+        ↓
+    Backend: analysis_routes.py
+        ↓
+    Background Task:
+        1. UPDATE tpsm_analysis_summary SET status='processing'
+        2. Download CSV from blob storage
+        3. Parse CSV → INSERT INTO tpsm_file_metadata (bulk)
+        4. Run analyses (age, type, tier, cost, etc.)
+        5. INSERT INTO tpsm_analysis_results (JSON)
+        6. UPDATE tpsm_analysis_summary SET status='completed'
+        ↓
+    Response: {message: "Analysis started"}
+
+Step 6: User views results
+    Frontend: AnalysisDashboard.js
+        ↓
+    API Call: GET /api/analysis/results/1
+        ↓
+    Backend: analysis_routes.py
+        ↓
+    Database Query:
+        SELECT * FROM tpsm_analysis_results WHERE project_id=1
+        ↓
+    JSON Parsing:
+        json.loads(age_distribution)
+        json.loads(file_types)
+        ↓
+    Response: {summary: {...}, age_distribution: [...], ...}
+        ↓
+    Frontend: Render charts with Chart.js
+```
+
+### 6.2 Background Task Processing
+
+```python
+@router.post("/trigger/{project_id}")
+async def trigger_analysis(
+    project_id: int,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db)
+):
+    async def run_analysis():
+        db_session = SessionLocal()
+        try:
+            analyzer = StorageAnalyzer(db_session)
+            await analyzer.analyze_project(project_id)
+        finally:
+            db_session.close()
+    
+    background_tasks.add_task(run_analysis)
+    
+    return {"message": "Analysis started", "status": "processing"}
+```
+
+**Why Background Tasks?**
+
+```
+Without background task:
+    User clicks "Analyze"
+        ↓
+    API processes CSV (takes 5 minutes)
+        ↓
+    User waits... waits... waits...
+        ↓
+    Browser timeout (30 seconds)
+        ↓
+    ERROR: Request timeout
+
+With background task:
+    User clicks "Analyze"
+        ↓
+    API returns immediately: "Started"
+        ↓
+    User sees: "Processing... check back later"
+        ↓
+    Background: Processing happens async
+        ↓
+    User polls status every 5 seconds
+        ↓
+    Status changes: processing → completed
+        ↓
+    User views results
+```
+
+**Polling Pattern:**
+
+```javascript
+// Frontend polls for status
+useEffect(() => {
+    const interval = setInterval(async () => {
+        const status = await getAnalysisStatus(projectId);
+        if (status.status === 'completed') {
+            clearInterval(interval);
+            // Fetch results
+        }
+    }, 5000);  // Check every 5 seconds
+    
+    return () => clearInterval(interval);
+}, [projectId]);
+```
+
+---
+
+## 7. KEY ALGORITHMS EXPLAINED
+
+### 7.1 Cost Calculation Algorithm
+
+```python
+def _calculate_costs(self, storage_tiers: List[Dict]) -> Dict:
+    current_cost = Decimal(0)
+    optimized_cost = Decimal(0)
+    
+    for tier in storage_tiers:
+        # Assume all data currently in Hot storage
+        current_cost += Decimal(str(tier['total_size_gb'])) * TIER_PRICING['Hot']
+        optimized_cost += Decimal(str(tier['monthly_cost']))
+    
+    monthly_savings = current_cost - optimized_cost
+    savings_pct = (monthly_savings / current_cost * 100)
+```
+
+**Example Calculation:**
+
+```
+Current State (everything in Hot):
+    Total size: 500 GB
+    Hot tier pricing: $0.0184/GB/month
+    Current cost: 500 * 0.0184 = $9.20/month
+
+Optimized State (tiered):
+    Hot:     50 GB * $0.0184 = $0.92
+    Cool:    150 GB * $0.01   = $1.50
+    Archive: 250 GB * $0.00099= $0.25
+    Delete:  50 GB * $0       = $0.00
+    ──────────────────────────────────
+    Optimized cost:           = $2.67/month
+
+Savings:
+    Monthly: $9.20 - $2.67 = $6.53 (71% reduction)
+    Annual: $6.53 * 12 = $78.36
+```
+
+### 7.2 Growth Projection Algorithm
+
+```python
+def _project_growth(self, project_id: int) -> Dict:
+    current_size_gb = Decimal(str(current_size or 0))
+    
+    annual_growth_rate = Decimal("15.0")  # 15% per year
+    monthly_rate = annual_growth_rate / Decimal("12") / Decimal("100")
+    
+    projected_6m = current_size_gb * (Decimal("1") + (monthly_rate * Decimal("6")))
+    projected_1y = current_size_gb * (Decimal("1") + (annual_growth_rate / Decimal("100")))
+    projected_3y = current_size_gb * ((Decimal("1") + (annual_growth_rate / Decimal("100"))) ** 3)
+```
+
+**Mathematical Explanation:**
+
+```
+Given:
+- Current size: 500 GB
+- Annual growth rate: 15% = 0.15
+- Monthly growth rate: 15% / 12 = 1.25% = 0.0125
+
+Formula: Future = Present * (1 + rate)^periods
+
+6 Months:
+    500 * (1 + 0.0125)^6
+    = 500 * 1.0768
+    = 538.4 GB
+
+1 Year:
+    500 * (1 + 0.15)^1
+    = 500 * 1.15
+    = 575 GB
+
+3 Years:
+    500 * (1.15)^3
+    = 500 * 1.5209
+    = 760.45 GB
+
+Compound Growth Explained:
+    Year 0: 500 GB
+    Year 1: 500 * 1.15 = 575 GB (+75 GB)
+    Year 2: 575 * 1.15 = 661.25 GB (+86.25 GB)
+    Year 3: 661.25 * 1.15 = 760.44 GB (+99.19 GB)
+    
+    Notice: Growth accelerates each year!
+```
+
+### 7.3 Access Pattern Classification
+
+```python
+def _analyze_access_patterns(self, project_id: int) -> Dict:
+    patterns = {
+        'Hot': (0, 30),      # Accessed in last 30 days
+        'Warm': (30, 90),    # 30-90 days
+        'Cold': (90, 365),   # 90-365 days
+        'Frozen': (365, 36500)  # > 1 year
+    }
+    
+    for pattern_name, (min_days, max_days) in patterns.items():
+        min_date = now - timedelta(days=max_days)
+        max_date = now - timedelta(days=min_days)
+        
+        result = db.query(
+            func.count(FileMetadata.id),
+            func.sum(FileMetadata.size_gb)
+        ).filter(
+            FileMetadata.accessed_date >= min_date,
+            FileMetadata.accessed_date < max_date
+        ).first()
+```
+
+**Access vs Modification - Key Difference:**
+
+```
+Modification Date:
+    - When file content changed
+    - Indicates data freshness
+    - Used for compliance (data retention)
+
+Access Date:
+    - When file was read/opened
+    - Indicates usage frequency
+    - Used for performance optimization
+
+Example:
+    File: "sales_report_2020.pdf"
+    Created: Jan 2020
+    Modified: Jan 2020 (never changed)
+    Accessed: Dec 2025 (read monthly)
+    
+    Age-based tier: Archive (> 5 years old)
+    Access-based tier: Hot (accessed recently)
+    
+    Best tier: Cool (compromise)
+    Reasoning: Important to access, but not frequently modified
+```
+
+---
+
+## 8. DESIGN PATTERNS & BEST PRACTICES
+
+### 8.1 Repository Pattern (Implicit)
+
+```python
+# Instead of:
+@router.get("/projects")
+def get_projects(db: Session = Depends(get_db)):
+    projects = db.query(Project).filter(Project.active == True).all()
+    return projects
+
+# Better (explicit repository):
+class ProjectRepository:
+    def __init__(self, db: Session):
+        self.db = db
+    
+    def get_all_active(self):
+        return self.db.query(Project).filter(Project.active == True).all()
+    
+    def get_by_id(self, project_id: int):
+        return self.db.query(Project).filter(Project.id == project_id).first()
+
+@router.get("/projects")
+def get_projects(db: Session = Depends(get_db)):
+    repo = ProjectRepository(db)
+    return repo.get_all_active()
+```
+
+**Why Repository Pattern?**
+
+```
+Benefits:
+1. Testability: Mock repository instead of database
+2. Reusability: Same query logic across routes
+3. Maintainability: Change query in one place
+4. Abstraction: Hide SQL details from routes
+```
+
+### 8.2 Service Layer Pattern
+
+```python
+# Current structure (good):
+Routes (API layer)
+    ↓
+Services (Business logic)
+    ↓
+Models (Database)
+
+# routes/analysis_routes.py
+@router.post("/trigger/{project_id}")
+async def trigger_analysis(project_id: int):
+    analyzer = StorageAnalyzer(db)
+    await analyzer.analyze_project(project_id)  # Service
+
+# services/storage_analyzer.py
+class StorageAnalyzer:
+    def analyze_project(self, project_id):
+        # Business logic here
+```
+
+**Separation of Concerns:**
+
+```python
+# BAD: Business logic in route
+@router.get("/projects/{project_id}/cost")
+def get_cost(project_id: int, db: Session = Depends(get_db)):
+    files = db.query(FileMetadata).filter(...).all()
+    total_size = sum(f.size_gb for f in files)
+    cost = total_size * Decimal('0.0184')
+    return {"cost": cost}
+    # Problem: Cost calculation logic in route!
+    # Hard to test, hard to reuse
+
+# GOOD: Business logic in service
+class CostService:
+    def calculate_project_cost(self, project_id: int):
+        files = self.db.query(FileMetadata).filter(...).all()
+        return self._calculate_cost(files)
+    
+    def _calculate_cost(self, files):
+        # Logic isolated and testable
+        pass
+
+@router.get("/projects/{project_id}/cost")
+def get_cost(project_id: int, db: Session = Depends(get_db)):
+    service = CostService(db)
+    return service.calculate_project_cost(project_id)
+```
+
+### 8.3 DTO Pattern (Data Transfer Objects)
+
+```python
+# Pydantic models are DTOs:
+
+# Database Model (internal representation):
+class Project(Base):
+    id = Column(Integer)
+    password_hash = Column(String)  # Sensitive!
+    internal_notes = Column(Text)   # Private!
+
+# DTO (external representation):
+class ProjectResponse(BaseModel):
+    id: int
+    project_name: str
+    # password_hash NOT included
+    # internal_notes NOT included
+
+# Route returns DTO, not database model:
+@router.get("/projects/{id}", response_model=ProjectResponse)
+def get_project(id: int, db: Session = Depends(get_db)):
+    project = db.query(Project).get(id)
+    return project  # FastAPI auto-converts using DTO
+```
+
+### 8.4 Dependency Injection
+
+```python
+# FastAPI's Depends() is DI:
+
+# Without DI:
+def get_projects():
+    db = SessionLocal()  # Hardcoded dependency
+    projects = db.query(Project).all()
+    db.close()
+    return projects
+
+# With DI:
+def get_projects(db: Session = Depends(get_db)):
+    #                 └─ Injected dependency
+    projects = db.query(Project).all()
+    return projects
+    # Cleanup handled by DI container
+
+# Benefits:
+# 1. Testing: Mock get_db to return test database
+# 2. Flexibility: Swap database without changing route
+# 3. Lifecycle: Automatic resource cleanup
+```
+
+**Testing with DI:**
+
+```python
+# Production:
+def get_db():
+    db = SessionLocal()
+    yield db
+    db.close()
+
+# Testing:
+def get_test_db():
+    db = TestSessionLocal()  # In-memory SQLite
+    yield db
+    db.close()
+
+# Test file:
+app.dependency_overrides[get_db] = get_test_db
+
+# Now all routes use test database!
+```
+
+---
+
+## 9. INTERVIEW QUESTIONS & ANSWERS
+
+### 9.1 Architecture Questions
+
+**Q: Why did you choose FastAPI over Flask or Django?**
+
+**A:** 
+"I chose FastAPI for several reasons:
+
+1. **Performance**: FastAPI is built on Starlette and uses async/await, making it one of the fastest Python frameworks. For our storage analysis that processes large CSV files, async support allows handling multiple uploads concurrently without blocking.
+
+2. **Type Safety**: FastAPI uses Pydantic for automatic request validation. This caught bugs early - for example, if a client sends `project_id` as a string instead of integer, FastAPI returns a 422 error automatically.
+
+3. **Auto Documentation**: Swagger UI is generated automatically from code. Our stakeholders could test APIs without Postman.
+
+4. **Modern Python**: Type hints make code self-documenting and enable better IDE support.
+
+For comparison:
+- Flask: Great for simple apps, but no built-in validation or async
+- Django: Excellent for full-stack apps, but heavier than we needed
+- FastAPI: Perfect balance of performance, features, and simplicity"
+
+---
+
+**Q: Explain your database schema design decisions.**
+
+**A:**
+"Our schema follows normalization principles with strategic denormalization:
+
+**Normalized Design:**
+- `tpsm_projects` → `tpsm_responses`: One-to-many relationship avoids repeating project info
+- Foreign keys with CASCADE ensure referential integrity
+- If I delete a project, all related responses auto-delete
+
+**Strategic Denormalization:**
+- `question_text` stored in `tpsm_responses` table even though it's in `questions_data.py`
+- **Reason**: Questions might change over time. Storing the text ensures historical accuracy.
+- **Example**: If question Q1 changes from "What's your environment?" to "Select environment type", old responses still show original question.
+
+**Performance Optimizations:**
+- `BigInteger` for FileMetadata.id (handles billions of file records)
+- Indexes on `project_id`, `modified_date`, `extension` (queries 100x faster)
+- JSON columns for flexible analysis results (no schema migration needed)
+
+**Trade-offs:**
+- JSON storage loses query ability inside JSON, but gains flexibility
+- Cascade deletes risk accidental data loss, but ensure consistency"
+
+---
+
+**Q: How does your application handle large file uploads?**
+
+**A:**
+"We use a multi-stage approach:
+
+**Stage 1: Streaming Upload to API**
+```python
+file_content = await file.read()
+```
+- FastAPI streams multipart data
+- File never fully loaded into memory at once
+- Max size enforced: 50MB per file
+
+**Stage 2: Transfer to Azure Blob Storage**
+```python
+blob_client.upload_blob(file_content)
+```
+- Azure SDK chunks file into 4MB blocks
+- Uploads blocks in parallel
+- Atomic commit ensures all-or-nothing
+
+**Stage 3: Batch Database Inserts**
+```python
+batch = []
+for row in csv_reader:
+    batch.append(FileMetadata(...))
+    if len(batch) >= 1000:
+        db.bulk_save_objects(batch)
+```
+- Parse 1000 rows, batch insert
+- 20x faster than row-by-row
+
+**Handling Failures:**
+- File upload: Transaction rollback, delete blob
+- CSV parsing: Status = 'failed', store error message
+- User retries from UI
+
+**Bottleneck**: CSV parsing is synchronous. Future improvement: Use Celery with Redis for true background processing."
+
+---
+
+### 9.2 Code Logic Questions
+
+**Q: Walk me through the storage tier recommendation algorithm.**
+
+**A:**
+"The algorithm uses a waterfall decision tree with safety checks:
+
+**Step 1: Hot Tier (Active Data)**
+```python
+modified_date >= last_30_days OR accessed_date >= last_30_days
+```
+- Either modification OR access triggers Hot tier
+- Prevents archiving actively-used data
+- Example: Old document accessed daily → Hot
+
+**Step 2: Cool Tier (Occasional Use)**
+```python
+(modified_date 30-180 days ago OR accessed_date 30-180 days ago)
+AND NOT in Hot tier
+```
+- Exclusion check prevents overlap
+- Sweet spot for periodic access
+- Example: Monthly reports → Cool
+
+**Step 3: Archive Tier (Rare Use)**
+```python
+modified_date 180-1095 days ago AND NOT in Hot/Cool
+```
+- Long-term storage
+- Still within retention period
+- Example: Compliance archives → Archive
+
+**Step 4: Delete Candidates (Conservative)**
+```python
+modified_date > 3 years
+AND accessed_date > 2 years
+AND (filename LIKE '%temp%' OR path LIKE '%cache%')
+```
+- **Multiple conditions required** (safety)
+- Filename pattern matching prevents false positives
+- Marked as 'candidates', not auto-deleted
+- Manual review required
+
+**Why This Design?**
+- False positive risk is low (conservative thresholds)
+- Business value: 60-80% of data moves to cheaper tiers
+- Example savings: 500GB → $9/month to $2/month"
+
+---
+
+**Q: How do you prevent duplicate analysis runs?**
+
+**A:**
+"We use a state machine with database-level checks:
+
+**State Machine:**
+```
+not_started → processing → completed
+                    ↓
+                  failed
+```
+
+**Implementation:**
+```python
+summary = db.query(AnalysisSummary).filter(project_id == 1).first()
+
+if summary and summary.analysis_status == 'processing':
+    raise HTTPException(409, 'Analysis already in progress')
+
+summary.analysis_status = 'processing'
+db.commit()  # Atomic state change
+```
+
+**Race Condition Prevention:**
+```
+Time    Request A           Request B
+────────────────────────────────────────
+T1      Check status: None  
+T2                          Check status: None
+T3      Set: processing     
+T4                          Set: processing ← PROBLEM!
+```
+
+**Solution: Database Transaction Isolation**
+```sql
+BEGIN TRANSACTION
+    SELECT status WHERE project_id = 1 FOR UPDATE
+    -- Row locked, Request B waits here
+    UPDATE status = 'processing'
+COMMIT
+```
+
+**Recovery from Stuck States:**
+- Background job checks `started_at` timestamps
+- If processing > 1 hour, mark as failed
+- User can retry from UI
+
+**Why Not Redis Lock?**
+- Simpler: Uses existing database
+- Persistent: Survives server restart
+- Trade-off: Slightly slower than Redis, but adequate for our use case"
+
+---
+
+**Q: Explain the cost calculation logic. Why use Decimal instead of Float?**
+
+**A:**
+"Financial calculations require exact precision:
+
+**The Float Problem:**
+```python
+0.1 + 0.2 = 0.30000000000000004  # Binary representation issue
+```
+
+**Real-world Impact:**
+```python
+# Calculate cost for 1 million files:
+for i in range(1_000_000):
+    cost += 0.0184  # Hot tier pricing
+
+# Float result: 18400.000000001234  ← Rounding error!
+# Decimal result: 18400.00           ← Exact!
+```
+
+**Our Implementation:**
+```python
+TIER_PRICING = {
+    'Hot': Decimal('0.0184'),      # Exact
+    'Cool': Decimal('0.01'),
+    'Archive': Decimal('0.00099')
+}
+
+current_cost = Decimal(0)
+for tier in storage_tiers:
+    size = Decimal(str(tier['total_size_gb']))
+    cost = size * TIER_PRICING[tier['tier_name']]
+    current_cost += cost
+```
+
+**Why str() Wrapper?**
+```python
+Decimal(0.0184)      # ❌ Converts float (imprecise) to Decimal
+Decimal('0.0184')    # ✅ Parses string (exact)
+
+# Example:
+Decimal(0.1)         # 0.1000000000000000055511151231257827021181583404541015625
+Decimal('0.1')       # 0.1
+```
+
+**Performance Trade-off:**
+- Decimal is 10x slower than float
+- For our use case (10,000 calculations), difference is 0.1 seconds
+- Correctness > Speed for financial data"
+
+---
+
+### 9.3 Design Questions
+
+**Q: How would you scale this application to handle 1000 concurrent users?**
+
+**A:**
+"Current bottlenecks and solutions:
+
+**1. Database Connection Pool**
+```python
+# Current: Default pool size (~10 connections)
+engine = create_engine(url)
+
+# Scaled:
+engine = create_engine(
+    url,
+    pool_size=50,           # 50 persistent connections
+    max_overflow=100,       # 100 temporary connections
+    pool_pre_ping=True,     # Test connection before use
+    pool_recycle=3600       # Recycle every hour
+)
+```
+
+**2. Background Task Queue**
+```python
+# Current: FastAPI BackgroundTasks (single process)
+background_tasks.add_task(run_analysis)
+
+# Scaled: Celery + Redis (distributed)
+@celery_app.task
+def run_analysis(project_id):
+    # Runs on separate worker pool
+    pass
+
+# Benefits:
+- Multiple workers process tasks in parallel
+- Task persistence (survives crashes)
+- Priority queues (urgent analyses first)
+```
+
+**3. Load Balancer + Multiple API Servers**
+```
+         Load Balancer
+              │
+    ┌─────────┼─────────┐
+    ▼         ▼         ▼
+  API-1     API-2     API-3  (3 FastAPI servers)
+    │         │         │
+    └─────────┴─────────┘
+              │
+          Database
+```
+
+**4. Caching Layer**
+```python
+# Redis cache for analysis results:
+@router.get('/analysis/results/{id}')
+def get_results(id: int):
+    cache_key = f'analysis:{id}'
+    cached = redis.get(cache_key)
+    if cached:
+        return json.loads(cached)
+    
+    results = db.query(AnalysisResults).get(id)
+    redis.setex(cache_key, 3600, json.dumps(results))
+    return results
+```
+
+**5. CDN for Static Assets**
+```
+User → CloudFlare CDN → React build files
+     ↓ (API calls)
+     → API servers
+```
+
+**Estimated Capacity:**
+- Current: 10-50 concurrent users
+- With scaling: 1000-5000 concurrent users
+- Bottleneck shifts to database I/O"
+
+---
+
+**Q: What would you improve in this codebase?**
+
+**A:**
+"I'd prioritize these improvements:
+
+**1. Authentication & Authorization (Critical)**
+```python
+# Current: No auth
+@router.delete('/projects/{id}')
+def delete_project(id: int):
+    # Anyone can delete any project!
+
+# Improved: JWT + Role-Based Access
+@router.delete('/projects/{id}')
+def delete_project(
+    id: int,
+    current_user: User = Depends(get_current_user)
+):
+    project = db.query(Project).get(id)
+    if project.owner_id != current_user.id:
+        raise HTTPException(403, 'Forbidden')
+    db.delete(project)
+```
+
+**2. Testing**
+```python
+# Current: No tests
+# Improved: pytest with >70% coverage
+
+def test_storage_tier_analysis():
+    # Arrange
+    mock_db = create_test_db()
+    analyzer = StorageAnalyzer(mock_db)
+    
+    # Act
+    results = analyzer._analyze_storage_tiers(project_id=1)
+    
+    # Assert
+    assert len(results) == 4  # Hot, Cool, Archive, Delete
+    assert results[0]['tier_name'] == 'Hot'
+```
+
+**3. Error Handling**
+```python
+# Current: Generic exceptions
+except Exception as e:
+    logger.error(f'Error: {e}')
+
+# Improved: Specific error types
+class AnalysisError(Exception):
+    pass
+
+class CSVParseError(AnalysisError):
+    pass
+
+try:
+    parse_csv()
+except CSVParseError as e:
+    # Specific recovery logic
+    send_alert_to_user(e)
+except AnalysisError as e:
+    # General recovery
+    rollback_analysis()
+```
+
+**4. Monitoring & Observability**
+```python
+# Add Application Insights:
+from opencensus.ext.azure import metrics_exporter
+
+# Track analysis duration:
+with tracer.span('analyze_project'):
+    analyzer.analyze_project(project_id)
+
+# Alerts:
+- Analysis takes > 10 minutes
+- Error rate > 5%
+- Database connection pool exhausted
+```
+
+**5. API Versioning**
+```python
+# Current: /api/projects
+# Improved: /api/v1/projects
+
+# When adding breaking changes:
+# /api/v2/projects (new version)
+# /api/v1/projects (still supported for 6 months)
+```
+
+**Priority Order:**
+1. Security (auth) - 2 weeks
+2. Testing - 2 weeks
+3. Monitoring - 1 week
+4. Error handling - 1 week
+5. API versioning - 3 days"
+
+---
+
+### 9.4 Problem-Solving Questions
+
+**Q: A user reports that CSV upload succeeds but analysis fails. How do you debug?**
+
+**A:**
+"I'd follow this systematic debugging process:
+
+**Step 1: Check Analysis Status**
+```sql
+SELECT 
+    analysis_status,
+    error_message,
+    started_at,
+    completed_at
+FROM tpsm_analysis_summary
+WHERE project_id = [user's project];
+```
+
+**Possible findings:**
+- Status stuck in 'processing' → Background task crashed
+- Status 'failed' with error_message → Read error
+- No record → Analysis never started
+
+**Step 2: Verify File Metadata**
+```sql
+SELECT COUNT(*) 
+FROM tpsm_file_metadata
+WHERE project_id = [user's project];
+```
+
+**If count = 0:**
+- CSV parsing failed
+- Check blob storage: File corrupt?
+- Check CSV format: Missing columns?
+
+**Step 3: Examine Application Logs**
+```bash
+# Search for project_id in logs
+grep "project_id=[user's project]" /var/log/app.log
+
+# Look for:
+- CSV parsing errors
+- Database errors
+- Python exceptions
+```
+
+**Step 4: Reproduce Locally**
+```python
+# Download user's CSV from blob storage
+blob_client.download_blob()
+
+# Run analysis locally with debugger
+analyzer = StorageAnalyzer(db)
+analyzer.analyze_project(project_id)  # Set breakpoint here
+```
+
+**Common Root Causes:**
+
+1. **CSV Encoding Issues**
+```python
+# Fix:
+csv_text = blob_content.decode('utf-8-sig')  # Handle BOM
+```
+
+2. **Column Name Mismatch**
+```python
+# CSV has 'FileName' but code expects 'File Name'
+file_name = row.get('FileName') or row.get('File Name')
+```
+
+3. **Date Format Differences**
+```python
+# Excel: '1/15/2026'
+# Script: '2026-01-15T10:30:00'
+
+def _parse_date(date_str):
+    formats = ['%Y-%m-%d', '%m/%d/%Y', '%d/%m/%Y']
+    for fmt in formats:
+        try:
+            return datetime.strptime(date_str, fmt)
+        except ValueError:
+            continue
+```
+
+**Resolution:**
+- Fix code to handle edge case
+- Add validation before analysis
+- Notify user with specific error message"
+
+---
+
+**Q: How would you implement real-time progress tracking for analysis?**
+
+**A:**
+"I'd use WebSockets for real-time updates:
+
+**Architecture:**
+```
+Frontend (React)
+    ↓ WebSocket connection
+    ↓
+FastAPI WebSocket endpoint
+    ↓
+Background Task updates progress
+    ↓
+Broadcast to connected clients
+```
+
+**Implementation:**
+
+**Backend: WebSocket endpoint**
+```python
+from fastapi import WebSocket
+
+@app.websocket('/ws/analysis/{project_id}')
+async def analysis_progress(websocket: WebSocket, project_id: int):
+    await websocket.accept()
+    
+    while True:
+        # Check progress from database
+        summary = db.query(AnalysisSummary).get(project_id)
+        
+        progress = {
+            'status': summary.analysis_status,
+            'progress_pct': summary.progress_percentage,
+            'current_step': summary.current_step
+        }
+        
+        await websocket.send_json(progress)
+        
+        if summary.analysis_status in ['completed', 'failed']:
+            break
+        
+        await asyncio.sleep(2)  # Update every 2 seconds
+    
+    await websocket.close()
+```
+
+**Background Task: Update progress**
+```python
+async def analyze_project(project_id):
+    total_steps = 10
+    
+    # Step 1: Parse CSV
+    update_progress(project_id, 1, total_steps, 'Parsing CSV')
+    parse_csv()
+    
+    # Step 2: Analyze age
+    update_progress(project_id, 2, total_steps, 'Analyzing age')
+    analyze_age_distribution()
+    
+    # ... more steps
+
+def update_progress(project_id, current, total, description):
+    summary = db.query(AnalysisSummary).get(project_id)
+    summary.progress_percentage = (current / total) * 100
+    summary.current_step = description
+    db.commit()
+```
+
+**Frontend: React hook**
+```javascript
+useEffect(() => {
+    const ws = new WebSocket(`ws://localhost:8000/ws/analysis/${projectId}`);
+    
+    ws.onmessage = (event) => {
+        const progress = JSON.parse(event.data);
+        setProgress(progress.progress_pct);
+        setCurrentStep(progress.current_step);
+    };
+    
+    return () => ws.close();
+}, [projectId]);
+
+// UI:
+<ProgressBar value={progress} />
+<p>Current: {currentStep}</p>
+```
+
+**Alternative: Server-Sent Events (SSE)**
+```python
+@app.get('/analysis/stream/{project_id}')
+async def stream_progress(project_id: int):
+    async def event_generator():
+        while True:
+            summary = db.query(AnalysisSummary).get(project_id)
+            yield f'data: {json.dumps(summary)}\n\n'
+            if summary.status == 'completed':
+                break
+            await asyncio.sleep(2)
+    
+    return StreamingResponse(event_generator(), media_type='text/event-stream')
+```
+
+**Why WebSocket over Polling?**
+- Polling: 100 clients × 1 request/sec = 100 req/sec
+- WebSocket: 100 clients × 1 connection = minimal overhead
+- Real-time: No delay, instant updates"
+
+---
+
+## CONCLUSION
+
+This document covers:
+- ✅ Complete architecture explanation
+- ✅ Line-by-line code analysis
+- ✅ Algorithm deep dives
+- ✅ Design pattern justifications
+- ✅ Interview Q&A scenarios
+
+**Key Takeaways for Interview:**
+
+1. **Understand Trade-offs**: Every design decision has pros/cons
+2. **Know Your Stack**: Why FastAPI? Why Decimal? Why async?
+3. **Performance Matters**: Batch inserts, connection pooling, indexing
+4. **Security Gaps**: Acknowledge missing auth/validation
+5. **Scalability Path**: How to grow from POC to production
+
+**Study Strategy:**
+1. Trace one complete user flow (create → upload → analyze → view)
+2. Explain 3 key algorithms (tier analysis, duplicate detection, cost calc)
+3. Identify 5 production improvements
+4. Practice explaining technical decisions in business terms
+
+Good luck with your interview! 🚀
